@@ -1,5 +1,5 @@
 {
-  "name": "Field Research Servay Tool by SHAH!",
-  "description": "A professional, mobile-optimized survey data collection application for academic research fieldwork. It offers offline data collection, response management, and multiple export formats (CSV, JSON, Text) to replace paper-based questionnaires.",
+  "name": "PWA Survey Builder",
+  "description": "A progressive web app for academic and field researchers to design, deploy, and manage surveys with multi-user support and offline-first data collection.",
   "requestFramePermissions": []
 }

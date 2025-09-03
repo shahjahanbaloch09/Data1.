@@ -11,11 +11,11 @@ body {
     display: block;
 }
 
-/* Confirmation Modal styles */
+/* Modal styles */
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgba(0, 0, 0, 0.6);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -28,4 +28,58 @@ body {
 .modal-overlay.active {
     visibility: visible;
     opacity: 1;
+}
+
+.modal-content {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+    max-width: 500px;
+    width: 90%;
+    transform: scale(0.95);
+    transition: transform 0.2s ease-in-out;
+}
+
+.modal-overlay.active .modal-content {
+    transform: scale(1);
+}
+
+/* Auth Page specific styles */
+.auth-container {
+    min-height: calc(100vh - 4rem); /* full height minus header */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+/* Survey Builder specific styles */
+.question-card {
+    cursor: grab;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.question-card:hover {
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+.question-card.is-dragging {
+    opacity: 0.5;
+    background: #e0e7ff;
+    transform: scale(1.02);
+    cursor: grabbing;
+}
+
+.drop-zone {
+    border: 2px dashed #cbd5e1;
+    background-color: #f8fafc;
+    min-height: 50px;
+    border-radius: 0.5rem;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.drop-zone.drag-over {
+    background-color: #e0e7ff;
+    border-color: #4f46e5;
 }
