@@ -1,5 +1,5 @@
 {
-  "name": "Data Collector by SHAH!",
-  "description": "A progressive web app for face-to-face data collection and survey management, supporting offline-first workflows.",
+  "name": "Research Survey Collector",
+  "description": "A progressive web app for researchers to create surveys, collect responses face-to-face, and manage completed data offline.",
   "requestFramePermissions": []
 }
