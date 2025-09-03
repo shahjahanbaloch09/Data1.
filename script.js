@@ -1,1675 +1,806 @@
-
+// --- SERVICE WORKER REGISTRATION ---
+// Registers the service worker to enable PWA features like offline caching.
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js')
-            .then(registration => {
-                console.log('ServiceWorker registration successful with scope: ', registration.scope);
-            })
-            .catch(err => {
-                console.log('ServiceWorker registration failed: ', err);
-            });
+            .then(registration => console.log('ServiceWorker registration successful'))
+            .catch(err => console.log('ServiceWorker registration failed: ', err));
     });
 }
 
-
+// --- MAIN APPLICATION LOGIC ---
+// An IIFE (Immediately Invoked Function Expression) is used to encapsulate the entire
+// application, preventing pollution of the global scope.
 document.addEventListener('DOMContentLoaded', () => {
-    // This is a large, single-file application. We use an IIFE and a modular pattern
-    // to keep the code organized.
-    
+(function() {
+
     // --- APPLICATION STATE ---
+    // A centralized object to hold the application's current state.
     const state = {
-        currentUser: null,
-        surveys: [],
-        responses: [],
-        db: null,
+        db: null, // Holds the IndexedDB database connection.
+        draggedElement: null, // Tracks the element being dragged in the builder.
     };
 
     // --- DOM ELEMENT REFERENCES ---
+    // Caching frequently accessed DOM elements for better performance.
     const appContainer = document.getElementById('app-container');
-    const pages = {
-        loading: document.getElementById('page-loading'),
-        auth: document.getElementById('page-auth'),
-        dashboard: document.getElementById('page-dashboard'),
-        builder: document.getElementById('page-builder'),
-        taker: document.getElementById('page-taker'),
-        responseDetail: document.getElementById('page-response-detail'),
-        // Legacy pages
-        legacySurvey: document.getElementById('page-legacy-survey'),
-        legacyResponses: document.getElementById('page-legacy-responses'),
-        legacyResponseDetail: document.getElementById('page-legacy-response-detail'),
-    };
     const modalContainer = document.getElementById('modal-container');
-    const navActions = document.getElementById('nav-actions');
-    const userGreeting = document.getElementById('user-greeting');
-    const logoutBtn = document.getElementById('logout-btn');
+
+    // --- SVG ICONS ---
+    // Storing SVG icons as functions makes them reusable and keeps the HTML clean.
+    const ICONS = {
+        plus: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>`,
+        trash: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.144-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.057-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>`,
+        drag: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>`,
+        edit: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>`,
+        collect: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+        responses: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125v-1.5c0-.621.504-1.125 1.125-1.125H6.75m13.5 0S21 17.625 21 15.75v-1.5c0-.621-.504-1.125-1.125-1.125H17.25m-13.5 0h13.5m-13.5 0a1.125 1.125 0 01-1.125-1.125v-1.5c0-.621.504-1.125 1.125-1.125H6.75m13.5 0S21 11.625 21 9.75v-1.5c0-.621-.504-1.125-1.125-1.125H17.25m-13.5 0h13.5m-13.5 0a1.125 1.125 0 01-1.125-1.125v-1.5c0-.621.504-1.125 1.125-1.125H6.75m0 0a1.125 1.125 0 011.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125H3.375m0 0a1.125 1.125 0 01-1.125-1.125v-1.5c0-.621.504-1.125 1.125-1.125H6.75" /></svg>`,
+    };
 
     // --- DATABASE MODULE (IndexedDB) ---
+    // This module handles all interactions with the IndexedDB database.
     const DB = {
+        // Initializes the database connection.
         init() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open('PWA_Survey_DB', 2);
+                const request = indexedDB.open('SurveyCollectorDB', 1);
 
                 request.onupgradeneeded = event => {
                     const db = event.target.result;
-                    if (!db.objectStoreNames.contains('users')) {
-                        db.createObjectStore('users', { keyPath: 'email' });
-                    }
                     if (!db.objectStoreNames.contains('surveys')) {
-                        const surveyStore = db.createObjectStore('surveys', { keyPath: 'id', autoIncrement: true });
-                        surveyStore.createIndex('by_user', 'userId', { unique: false });
+                        db.createObjectStore('surveys', { keyPath: 'id', autoIncrement: true });
                     }
                     if (!db.objectStoreNames.contains('responses')) {
                         const responseStore = db.createObjectStore('responses', { keyPath: 'id', autoIncrement: true });
-                        responseStore.createIndex('by_survey', 'surveyId', { unique: false });
+                        responseStore.createIndex('surveyId', 'surveyId', { unique: false });
                     }
                 };
 
                 request.onsuccess = event => {
                     state.db = event.target.result;
-                    console.log('Database initialized');
+                    console.log('Database initialized successfully.');
                     resolve(state.db);
                 };
 
                 request.onerror = event => {
-                    console.error('Database error:', event.target.errorCode);
-                    reject(event.target.errorCode);
+                    console.error('Database error:', event.target.error);
+                    reject(event.target.error);
                 };
             });
         },
-
-        // --- User Methods ---
-        addUser(user) {
-            return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['users'], 'readwrite');
-                const store = transaction.objectStore('users');
-                const request = store.add(user);
-                request.onsuccess = () => resolve();
-                request.onerror = (e) => reject(e.target.error);
-            });
-        },
-        getUser(email) {
-            return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['users'], 'readonly');
-                const store = transaction.objectStore('users');
-                const request = store.get(email);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = (e) => reject(e.target.error);
-            });
-        },
         
+        // Generic method to perform a database transaction.
+        _transaction(storeName, mode, callback) {
+            return new Promise((resolve, reject) => {
+                const transaction = state.db.transaction(storeName, mode);
+                const store = transaction.objectStore(storeName);
+                callback(store, resolve, reject);
+            });
+        },
+
         // --- Survey Methods ---
-        saveSurvey(surveyData) {
-            return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['surveys'], 'readwrite');
-                const store = transaction.objectStore('surveys');
-                const request = store.put(surveyData); // put handles both add and update
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = e => reject(e.target.error);
-            });
-        },
-        getSurveysForUser(userId) {
-             return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['surveys'], 'readonly');
-                const store = transaction.objectStore('surveys');
-                const index = store.index('by_user');
-                const request = index.getAll(userId);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = e => reject(e.target.error);
-            });
-        },
-        getSurvey(id) {
-            return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['surveys'], 'readonly');
-                const store = transaction.objectStore('surveys');
-                const request = store.get(parseInt(id));
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = e => reject(e.target.error);
-            });
-        },
-        deleteSurvey(id) {
-            return new Promise((resolve, reject) => {
-                 const transaction = state.db.transaction(['surveys', 'responses'], 'readwrite');
-                 const surveyStore = transaction.objectStore('surveys');
-                 const responseStore = transaction.objectStore('responses');
-                 
-                 // Delete the survey
-                 surveyStore.delete(id);
-
-                 // Delete associated responses
-                 const responseIndex = responseStore.index('by_survey');
-                 const responseRequest = responseIndex.openCursor(IDBKeyRange.only(id));
-                 responseRequest.onsuccess = (event) => {
-                     const cursor = event.target.result;
-                     if (cursor) {
-                         responseStore.delete(cursor.primaryKey);
-                         cursor.continue();
-                     }
-                 };
-
-                 transaction.oncomplete = () => resolve();
-                 transaction.onerror = e => reject(e.target.error);
-            });
-        },
+        saveSurvey: (survey) => DB._transaction('surveys', 'readwrite', (store, res) => {
+            const request = store.put(survey);
+            request.onsuccess = () => res(request.result);
+        }),
+        getSurvey: (id) => DB._transaction('surveys', 'readonly', (store, res) => {
+            store.get(id).onsuccess = e => res(e.target.result);
+        }),
+        getAllSurveys: () => DB._transaction('surveys', 'readonly', (store, res) => {
+            store.getAll().onsuccess = e => res(e.target.result);
+        }),
+        deleteSurvey: (id) => DB._transaction('surveys', 'readwrite', (store, res) => {
+            store.delete(id).onsuccess = () => res();
+        }),
 
         // --- Response Methods ---
-        addResponse(responseData) {
-             return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['responses'], 'readwrite');
-                const store = transaction.objectStore('responses');
-                const request = store.add(responseData);
-                request.onsuccess = () => resolve();
-                request.onerror = e => reject(e.target.error);
-            });
-        },
-        getResponsesForSurvey(surveyId) {
-            return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['responses'], 'readonly');
-                const store = transaction.objectStore('responses');
-                const index = store.index('by_survey');
-                const request = index.getAll(surveyId);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = e => reject(e.target.error);
-            });
-        },
-        getResponse(id) {
-             return new Promise((resolve, reject) => {
-                const transaction = state.db.transaction(['responses'], 'readonly');
-                const store = transaction.objectStore('responses');
-                const request = store.get(parseInt(id));
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = e => reject(e.target.error);
-            });
-        },
+        addResponse: (response) => DB._transaction('responses', 'readwrite', (store, res) => {
+            store.add(response).onsuccess = () => res();
+        }),
+        getResponsesForSurvey: (surveyId) => DB._transaction('responses', 'readonly', (store, res) => {
+            const index = store.index('surveyId');
+            index.getAll(surveyId).onsuccess = e => res(e.target.result);
+        }),
+        getResponse: (id) => DB._transaction('responses', 'readonly', (store, res) => {
+            store.get(id).onsuccess = e => res(e.target.result);
+        }),
     };
-
-    // --- AUTH MODULE ---
-    const Auth = {
-        async signup(name, email, password) {
-            const existingUser = await DB.getUser(email);
-            if (existingUser) {
-                alert('An account with this email already exists.');
-                return false;
-            }
-            // In a real app, hash the password. Here we store it plain for simplicity.
-            await DB.addUser({ name, email, password });
-            return this.login(email, password);
-        },
-        async login(email, password) {
-            const user = await DB.getUser(email);
-            if (user && user.password === password) {
-                state.currentUser = user;
-                localStorage.setItem('currentUserEmail', user.email);
-                UI.updateNav();
-                Router.navigate('/dashboard');
-                return true;
-            }
-            alert('Invalid email or password.');
-            return false;
-        },
-        logout() {
-            state.currentUser = null;
-            localStorage.removeItem('currentUserEmail');
-            UI.updateNav();
-            Router.navigate('/auth');
-        },
-        async checkSession() {
-            const userEmail = localStorage.getItem('currentUserEmail');
-            if (userEmail) {
-                state.currentUser = await DB.getUser(userEmail);
-                if (state.currentUser) {
-                    UI.updateNav();
-                } else {
-                    // User in local storage but not DB, clear session
-                    this.logout();
-                }
-            }
-        }
-    };
-
+    
     // --- UI MODULE ---
+    // This module handles rendering content to the DOM.
     const UI = {
-        showPage(pageId) {
-            Object.values(pages).forEach(p => p.classList.remove('active'));
-            if (pages[pageId]) {
-                pages[pageId].classList.add('active');
-            } else {
-                pages.auth.classList.add('active'); // Fallback
-            }
+        // Renders a page template into the main app container.
+        renderPage(html) {
+            appContainer.innerHTML = html;
         },
 
-        updateNav() {
-            if (state.currentUser) {
-                navActions.classList.remove('hidden');
-                userGreeting.textContent = `Hello, ${state.currentUser.name}`;
-            } else {
-                navActions.classList.add('hidden');
-            }
-        },
-
-        render(container, html) {
-            container.innerHTML = html;
-        },
-        
+        // Renders a modal into the modal container.
         renderModal(html) {
-            this.render(modalContainer, html);
-            // Allow closing by clicking the overlay
-            const overlay = modalContainer.querySelector('.modal-overlay');
-            if (overlay) {
-                overlay.addEventListener('click', e => {
-                    if (e.target === overlay) {
-                        this.closeModal();
-                    }
-                });
-            }
+            modalContainer.innerHTML = html;
         },
-        
+
+        // Clears the modal container.
         closeModal() {
             modalContainer.innerHTML = '';
         },
-    };
-
-    // --- ROUTER & PAGE RENDERERS ---
-    const Router = {
-        routes: {},
         
-        add(path, handler) {
-            // Simple regex to handle path parameters like /builder/:id
-            const paramNames = [];
-            const parsedPath = path.replace(/:(\w+)/g, (_, name) => {
-                paramNames.push(name);
-                return '([^\\/]+)';
-            });
-            this.routes[path] = {
-                regex: new RegExp(`^${parsedPath}$`),
-                paramNames,
-                handler
-            };
-        },
+        // --- Page Renderers ---
 
-        navigate(path) {
-            window.location.hash = path;
-        },
+        async renderDashboard() {
+            const surveys = await DB.getAllSurveys();
+            const surveysWithCounts = await Promise.all(surveys.map(async survey => {
+                const responses = await DB.getResponsesForSurvey(survey.id);
+                return { ...survey, responseCount: responses.length };
+            }));
 
-        handle() {
-            const path = window.location.hash.slice(1) || '/';
-            let matched = false;
-            
-            if (!state.currentUser) {
-                 // If not logged in, force auth page (legacy access is handled there)
-                this.routes['/auth'].handler();
-                return;
-            }
-
-            for (const routePath in this.routes) {
-                const route = this.routes[routePath];
-                const match = path.match(route.regex);
-                if (match) {
-                    const params = {};
-                    route.paramNames.forEach((name, index) => {
-                        params[name] = match[index + 1];
-                    });
-                    route.handler(params);
-                    matched = true;
-                    break;
-                }
-            }
-
-            if (!matched) {
-                 // Fallback route
-                 this.routes[state.currentUser ? '/dashboard' : '/auth'].handler();
-            }
-        },
-
-        init() {
-            // Public routes
-            this.add('/auth', renderAuthPage);
-            
-            // Private routes
-            this.add('/dashboard', renderDashboardPage);
-            this.add('/builder/:id', renderBuilderPage);
-            this.add('/collect/:id', renderTakerPage);
-            this.add('/response/:id', renderResponseDetailPage);
-
-            // Legacy routes
-            this.add('/legacy/survey', Legacy.renderSurveyPage);
-            this.add('/legacy/responses', Legacy.renderResponsesPage);
-            this.add('/legacy/responses/:id', Legacy.renderResponseDetailPage);
-
-            this.add('/', () => {
-                if (state.currentUser) {
-                    this.navigate('/dashboard');
-                } else {
-                    this.navigate('/auth');
-                }
-            });
-
-            window.addEventListener('hashchange', () => this.handle());
-        }
-    };
-    
-    // --- Page Rendering Functions ---
-    
-    function renderAuthPage() {
-        UI.showPage('auth');
-        const html = `
-            <div class="auth-container">
-                <div class="max-w-md w-full bg-white p-8 rounded-xl shadow-lg">
-                    <div id="auth-form-container">
-                        <!-- Login form will be injected here by default -->
-                    </div>
-                    <div class="mt-8 text-center">
-                        <button id="legacy-survey-btn" class="w-full text-center px-4 py-3 bg-gray-700 text-white font-bold rounded-lg hover:bg-gray-800 transition-colors">
-                            Access Legacy Proforma (SHAH)
-                        </button>
+            const surveyCards = surveysWithCounts.length > 0 ? surveysWithCounts.map(s => `
+                <div class="glass-card">
+                    <h3 class="survey-card-title">${s.metadata.title || 'Untitled Survey'}</h3>
+                    <p class="survey-card-meta">${s.responseCount} response(s) | Last updated: ${new Date(s.lastUpdated).toLocaleDateString()}</p>
+                    <div class="survey-card-actions">
+                        <a href="#/collect/${s.id}" class="btn btn-primary">${ICONS.collect} Collect</a>
+                        <a href="#/responses/${s.id}" class="btn btn-secondary">${ICONS.responses} View Responses</a>
+                        <a href="#/builder/${s.id}" class="btn btn-secondary">${ICONS.edit} Edit</a>
                     </div>
                 </div>
-            </div>`;
-        UI.render(pages.auth, html);
-        renderLoginForm(); // Default to login
-    }
+            `).join('') : `
+                <div class="empty-state glass-card">
+                    <div class="empty-state-icon">📝</div>
+                    <h2 class="empty-state-title">No Surveys Yet</h2>
+                    <p class="empty-state-text">Create your first survey to start collecting data.</p>
+                    <button data-action="create-survey" class="btn btn-primary">${ICONS.plus} Create First Survey</button>
+                </div>`;
 
-    function renderLoginForm() {
-        const container = document.getElementById('auth-form-container');
-        if (!container) return;
-        const html = `
-            <h2 class="text-3xl font-bold text-center text-gray-800 mb-6">Login</h2>
-            <form id="login-form" class="space-y-4">
-                <div>
-                    <label class="block text-gray-700">Email</label>
-                    <input type="email" name="email" required class="w-full px-4 py-2 mt-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-600">
-                </div>
-                <div>
-                    <label class="block text-gray-700">Password</label>
-                    <input type="password" name="password" required class="w-full px-4 py-2 mt-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-600">
-                </div>
-                <button type="submit" class="w-full px-4 py-3 text-white bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg hover:opacity-90 font-semibold">Login</button>
-            </form>
-            <p class="mt-4 text-center text-sm">Don't have an account? <a href="#" id="show-signup" class="text-blue-600 hover:underline">Sign up</a></p>
-        `;
-        UI.render(container, html);
-    }
-
-    function renderSignupForm() {
-        const container = document.getElementById('auth-form-container');
-        if (!container) return;
-        const html = `
-            <h2 class="text-3xl font-bold text-center text-gray-800 mb-6">Sign Up</h2>
-            <form id="signup-form" class="space-y-4">
-                <div>
-                    <label class="block text-gray-700">Full Name</label>
-                    <input type="text" name="name" required class="w-full px-4 py-2 mt-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-600">
-                </div>
-                <div>
-                    <label class="block text-gray-700">Email</label>
-                    <input type="email" name="email" required class="w-full px-4 py-2 mt-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-600">
-                </div>
-                <div>
-                    <label class="block text-gray-700">Password</label>
-                    <input type="password" name="password" required class="w-full px-4 py-2 mt-1 border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-600">
-                </div>
-                <button type="submit" class="w-full px-4 py-3 text-white bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg hover:opacity-90 font-semibold">Sign Up</button>
-            </form>
-            <p class="mt-4 text-center text-sm">Already have an account? <a href="#" id="show-login" class="text-blue-600 hover:underline">Login</a></p>
-        `;
-        UI.render(container, html);
-    }
-    
-    async function renderDashboardPage() {
-        UI.showPage('dashboard');
-        const surveys = await DB.getSurveysForUser(state.currentUser.email);
-
-        const surveysWithResponses = await Promise.all(surveys.map(async s => {
-            const responses = await DB.getResponsesForSurvey(s.id);
-            return { ...s, responses };
-        }));
-
-        const surveyCards = surveysWithResponses.length > 0 ? surveysWithResponses.map(s => `
-            <div class="bg-white rounded-xl shadow-lg survey-card">
-                <div class="p-6">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <h3 class="font-bold text-xl text-gray-800">${s.metadata.title}</h3>
-                            <p class="text-sm text-gray-500">${s.metadata.university}</p>
-                        </div>
-                        <button data-action="toggle-responses" class="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-                        </button>
-                    </div>
-                    <p class="mt-4 text-sm font-semibold text-blue-600">${s.responses.length} ${s.responses.length === 1 ? 'Response' : 'Responses'}</p>
-                </div>
-                <div class="border-t px-6 py-4 flex flex-wrap gap-2 justify-end">
-                    <button data-action="delete" data-id="${s.id}" class="p-2 text-red-500 hover:bg-red-100 rounded-full transition-colors" title="Delete Survey">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                    </button>
-                    <button data-action="export" data-id="${s.id}" class="px-4 py-2 bg-green-100 text-green-800 font-semibold rounded-lg text-sm hover:bg-green-200 transition-colors">Export</button>
-                    <button data-action="edit" data-id="${s.id}" class="px-4 py-2 bg-blue-100 text-blue-800 font-semibold rounded-lg text-sm hover:bg-blue-200 transition-colors">Edit</button>
-                    <button data-action="start-response" data-id="${s.id}" class="px-4 py-2 bg-purple-100 text-purple-800 font-semibold rounded-lg text-sm hover:bg-purple-200 transition-colors">Start New Response</button>
-                </div>
-                <div class="survey-card-body bg-slate-50 border-t rounded-b-xl">
-                     ${s.responses.length > 0 ? `
-                        <ul class="p-4 space-y-2">
-                         ${s.responses.sort((a,b) => b.timestamp - a.timestamp).map(r => `
-                            <li class="p-3 bg-white rounded-md shadow-sm">
-                                <a href="#/response/${r.id}" class="block">
-                                    <p class="font-semibold text-gray-700">Response ID: ${r.id}</p>
-                                    <p class="text-xs text-gray-500">Collected: ${new Date(r.timestamp).toLocaleString()}</p>
-                                </a>
-                            </li>
-                         `).join('')}
-                        </ul>
-                     ` : `
-                        <p class="p-8 text-center text-gray-500">No responses collected yet.</p>
-                     `}
-                </div>
-            </div>
-        `).join('') : `
-            <div class="md:col-span-2 text-center py-16 bg-white rounded-lg shadow-sm">
-                <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-16 w-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
-                <h3 class="mt-4 text-xl font-semibold text-gray-800">No surveys yet</h3>
-                <p class="mt-1 text-gray-500">Create your first survey to start collecting data.</p>
-            </div>
-        `;
-
-        const html = `
-            <div class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-                <div class="max-w-7xl mx-auto">
-                    <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
-                        <div>
-                            <h1 class="text-4xl font-extrabold text-gray-800 tracking-tight">My Surveys</h1>
-                            <p class="text-lg text-gray-600 mt-2">Manage your research projects.</p>
-                        </div>
-                        <button id="new-survey-btn" class="mt-4 sm:mt-0 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity flex items-center space-x-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
-                            <span>New Survey</span>
-                        </button>
+            this.renderPage(`
+                <div class="page" id="page-dashboard">
+                    <header class="page-header">
+                        <h2 class="page-title">Dashboard</h2>
+                        <p class="page-subtitle">Your research projects at a glance.</p>
+                        ${surveys.length > 0 ? `<button data-action="create-survey" class="btn btn-primary" style="margin-top: 1rem;">${ICONS.plus} Create New Survey</button>` : ''}
                     </header>
-                    <main class="grid grid-cols-1 md:grid-cols-2 gap-6" id="survey-list">
-                        ${surveyCards}
-                    </main>
+                    <div class="dashboard-grid">${surveyCards}</div>
                 </div>
-            </div>`;
-        UI.render(pages.dashboard, html);
-    }
+            `);
+        },
 
-    async function renderBuilderPage({id}) {
-        UI.showPage('builder');
-        const survey = await DB.getSurvey(id);
-        if(!survey) {
-            alert('Survey not found!');
-            Router.navigate('/dashboard');
-            return;
-        }
+        async renderBuilder(surveyId) {
+            const survey = surveyId === 'new' ? null : await DB.getSurvey(parseInt(surveyId));
+            const questions = survey ? survey.questions : [];
+            
+            const questionTypes = [
+                { type: 'short_text', label: 'Short Text' }, { type: 'long_text', label: 'Long Text' },
+                { type: 'number', label: 'Number' }, { type: 'date', label: 'Date' },
+                { type: 'radio', label: 'Single Choice' }, { type: 'checkbox', label: 'Multi Choice' },
+                { type: 'dropdown', label: 'Dropdown' }, { type: 'likert', label: 'Likert Scale' },
+                { type: 'rating', label: 'Star Rating' }
+            ];
 
-        const questionTypes = [
-            { type: 'short_text', label: 'Short Text' },
-            { type: 'long_text', label: 'Long Text' },
-            { type: 'radio', label: 'Single Choice' },
-            { type: 'checkbox', label: 'Multi Choice' },
-            { type: 'dropdown', label: 'Dropdown' },
-            { type: 'date', label: 'Date' },
-            { type: 'number', label: 'Number' },
-        ];
-
-        const html = `
-            <div class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-                <div class="max-w-4xl mx-auto" data-survey-id="${survey.id}">
-                    <header class="mb-8 flex justify-between items-start">
-                        <div>
-                            <h1 class="text-4xl font-extrabold text-gray-800 tracking-tight">${survey.metadata.title}</h1>
-                            <p class="text-lg text-gray-600 mt-2">Survey Builder</p>
-                        </div>
-                         <button data-action="show-settings" data-id="${survey.id}" class="p-3 text-gray-500 hover:bg-gray-200 rounded-full transition-colors" title="Survey Settings">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                        </button>
+            const html = `
+                <div class="page" id="page-builder" data-survey-id="${survey?.id || 'new'}">
+                    <header class="page-header">
+                        <a href="#/" class="btn btn-secondary" style="margin-bottom: 1rem;">&larr; Back to Dashboard</a>
+                        <h2 class="page-title">${survey ? 'Edit Survey' : 'Create Survey'}</h2>
+                        <p class="page-subtitle">${survey ? 'Modify your survey structure and settings.' : 'Build a new survey from scratch.'}</p>
                     </header>
                     
-                    <div class="bg-white p-6 rounded-xl shadow-lg mb-8">
-                        <h2 class="text-2xl font-bold text-gray-700 mb-4">Add a Question</h2>
-                        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-                            ${questionTypes.map(q => `
-                                <button data-action="add-question" data-type="${q.type}" class="p-3 border rounded-lg text-center hover:bg-blue-50 hover:border-blue-300 transition-colors">
-                                    <span class="font-semibold text-gray-700 pointer-events-none text-sm">${q.label}</span>
-                                </button>
-                            `).join('')}
-                        </div>
-                    </div>
-
-                    <main id="question-container" class="space-y-4">
-                        <!-- Questions will be rendered here -->
-                    </main>
-                    
-                    <div class="drop-zone mt-4"></div>
-
-                    <footer class="mt-8 flex justify-end items-center space-x-4">
-                         <a href="#/dashboard" class="px-8 py-4 bg-gray-300 text-gray-800 font-bold rounded-lg text-lg hover:bg-gray-400 transition-colors">
-                            Back to Dashboard
-                        </a>
-                        <button id="save-survey-btn" class="px-8 py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity">
-                            Save Survey
-                        </button>
-                    </footer>
-                </div>
-            </div>`;
-        UI.render(pages.builder, html);
-        renderQuestions(survey.structure);
-    }
-    
-    function renderQuestions(questions = []) {
-        const container = document.getElementById('question-container');
-        if (!container) return;
-
-        if (questions.length === 0) {
-            container.innerHTML = `<p class="text-center text-gray-500 py-8">No questions yet. Click a button above to add one.</p>`;
-            return;
-        }
-
-        container.innerHTML = questions.map((q, index) => `
-            <div class="question-card bg-white p-6 rounded-xl shadow-lg border-l-4 border-blue-500" draggable="true" data-question-id="${q.id}">
-                <div class="flex items-start justify-between">
-                    <div class="flex-grow pr-4">
-                        <input type="text" data-action="update-question-text" value="${q.text}" class="text-lg font-semibold text-gray-800 w-full border-b-2 border-transparent focus:border-blue-500 outline-none p-1" placeholder="Enter your question text">
-                        <textarea data-action="update-question-description" class="mt-2 text-sm text-gray-600 w-full border rounded-md p-2" placeholder="Helper/Description Text (Optional)">${q.description || ''}</textarea>
-                        
-                        ${q.type === 'radio' || q.type === 'checkbox' || q.type === 'dropdown' ? `
-                            <div class="mt-4 space-y-2 options-container">
-                                ${q.options.map((opt, optIndex) => `
-                                    <div class="flex items-center">
-                                        <input type="text" data-action="update-option-text" data-option-index="${optIndex}" value="${opt}" class="flex-grow border-b outline-none focus:border-gray-400 p-1 text-gray-600" placeholder="Option text">
-                                        <button data-action="delete-option" data-option-index="${optIndex}" class="ml-2 text-gray-400 hover:text-red-500">&times;</button>
-                                    </div>
-                                `).join('')}
+                    <div class="builder-grid">
+                        <!-- Left Panel: Add Questions & Settings -->
+                        <div class="glass-card" style="position: sticky; top: 80px;">
+                            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;">Add Question</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                                ${questionTypes.map(q => `<button class="btn btn-secondary" data-action="add-question" data-type="${q.type}">${q.label}</button>`).join('')}
                             </div>
-                            <button data-action="add-option" class="mt-2 text-sm text-blue-600 hover:underline">Add Option</button>
-                        ` : ''}
-                    </div>
-                    <div class="flex flex-col items-center space-y-2 flex-shrink-0">
-                        <span class="text-xs text-gray-400 uppercase">${q.type.replace('_', ' ')}</span>
-                        <button data-action="delete-question" class="p-1 text-gray-400 hover:text-red-500" title="Delete Question">
-                           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                    </div>
-                </div>
-                 <div class="mt-4 pt-4 border-t flex items-center justify-end">
-                    <label class="flex items-center cursor-pointer">
-                        <span class="mr-3 text-sm font-medium text-gray-700">Required</span>
-                        <div class="relative">
-                            <input type="checkbox" data-action="update-question-required" class="sr-only peer" ${q.isRequired ? 'checked' : ''}>
-                            <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                         </div>
-                    </label>
-                </div>
-            </div>
-        `).join('');
-    }
 
-    async function renderTakerPage({ id }) {
-        UI.showPage('taker');
-
-        const containerHtml = `
-            <div class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-                <div id="survey-taker-container" class="max-w-3xl mx-auto">
-                    <!-- Content will be injected here -->
-                </div>
-            </div>
-        `;
-        UI.render(pages.taker, containerHtml);
-        const container = document.getElementById('survey-taker-container');
-
-        const renderMessage = (title, message, isError = false) => {
-            const messageHtml = `
-            <div class="bg-white p-8 rounded-xl shadow-lg text-center">
-                <h2 class="text-2xl font-bold ${isError ? 'text-red-600' : 'text-yellow-600'}">${title}</h2>
-                <p class="text-gray-700 mt-2">${message}</p>
-                <a href="#/dashboard" class="mt-6 inline-block px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Back to Dashboard</a>
-            </div>`;
-            UI.render(container, messageHtml);
-        };
-        
-        const survey = await DB.getSurvey(id);
-        if(!survey) {
-            renderMessage('Not Found', 'This survey could not be found.', true);
-            return;
-        }
-
-        if (survey.structure.length === 0) {
-            renderMessage('Empty Survey', 'This survey has no questions. Please add questions in the builder.', true);
-            return;
-        }
-
-        if (survey.settings?.closingDate && new Date() > new Date(survey.settings.closingDate)) {
-             renderMessage('Survey Closed', 'This survey is no longer accepting responses.');
-             return;
-        }
-
-        if (survey.settings?.responseLimit) {
-            const responses = await DB.getResponsesForSurvey(parseInt(id));
-            if (responses.length >= survey.settings.responseLimit) {
-                renderMessage('Limit Reached', 'This survey has reached its response limit.');
-                return;
-            }
-        }
-
-        renderConsentScreen(survey);
-    }
-
-    async function renderResponseDetailPage({ id }) {
-        UI.showPage('responseDetail');
-        const response = await DB.getResponse(id);
-        if (!response) {
-            pages.responseDetail.innerHTML = `<p>Response not found.</p>`;
-            return;
-        }
-        const survey = await DB.getSurvey(response.surveyId);
-
-        const html = `
-            <div class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-                <div class="max-w-4xl mx-auto">
-                    <header class="mb-6">
-                        <h1 class="text-3xl font-extrabold text-gray-800 tracking-tight">Response Details</h1>
-                        <p class="text-lg text-gray-600 mt-1">For survey: <span class="font-semibold">${survey.metadata.title}</span></p>
-                        <div class="mt-2 text-sm text-gray-500">
-                            <span>Response ID: <strong class="text-gray-700">${response.id}</strong></span> | 
-                            <span>Collected: <strong class="text-gray-700">${new Date(response.timestamp).toLocaleString()}</strong></span>
-                        </div>
-                    </header>
-
-                     <div class="sticky top-16 bg-slate-100 py-4 z-10 -mx-4 px-4 border-b mb-6">
-                        <div class="max-w-4xl mx-auto flex items-center justify-between">
-                            <a href="#/dashboard" class="px-5 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg text-base hover:bg-gray-100 transition-colors">
-                                &larr; Back to Dashboard
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <main class="space-y-4">
-                        ${survey.structure.map(q => `
-                            <div class="bg-white p-6 rounded-lg shadow-sm">
-                                <p class="text-lg font-semibold text-gray-800">${q.text}</p>
-                                ${q.description ? `<p class="text-sm text-gray-500 mt-1">${q.description}</p>` : ''}
-                                <div class="mt-3 pt-3 border-t">
-                                    <p class="text-gray-900 text-lg">${String(response.data[q.text] || '<em>Not Answered</em>')}</p>
+                        <!-- Right Panel: Survey Form -->
+                        <div>
+                            <div class="glass-card" id="survey-metadata-editor">
+                                <div class="form-group">
+                                    <label class="form-label" for="meta-title">Project/Study Title</label>
+                                    <input type="text" id="meta-title" class="form-input" value="${survey?.metadata.title || ''}" placeholder="e.g., Community Health Assessment">
                                 </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="meta-university">University/Organization</label>
+                                    <input type="text" id="meta-university" class="form-input" value="${survey?.metadata.university || ''}" placeholder="e.g., National Research University">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="meta-researcher">Researcher Name</label>
+                                    <input type="text" id="meta-researcher" class="form-input" value="${survey?.metadata.researcher || ''}" placeholder="e.g., Dr. Jane Doe">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="meta-consent">Disclaimer/Consent Text</label>
+                                    <textarea id="meta-consent" class="form-textarea" placeholder="Explain the purpose of the survey, data privacy, and ask for consent.">${survey?.metadata.consent || ''}</textarea>
+                                </div>
+                            </div>
+                            
+                            <h3 style="font-size: 1.5rem; font-weight: 600; margin: 2rem 0 1rem;">Questions</h3>
+                            <div id="question-list" class="space-y-4">
+                                <!-- Questions will be rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            this.renderPage(html);
+            this.renderQuestionList(questions);
+        },
+        
+        // Renders the list of question cards in the builder
+        renderQuestionList(questions) {
+            const container = document.getElementById('question-list');
+            if (!container) return;
+            if (questions.length === 0) {
+                container.innerHTML = `<div class="empty-state glass-card"><p>No questions yet. Add one from the panel.</p></div>`;
+            } else {
+                container.innerHTML = questions.map(q => this.getQuestionCardHtml(q)).join('');
+            }
+        },
+
+        // Generates HTML for a single question card in the builder
+        getQuestionCardHtml(q) {
+            const isChoice = ['radio', 'checkbox', 'dropdown', 'likert'].includes(q.type);
+            const optionsHtml = isChoice ? `
+                <div class="mt-4">
+                    <label class="form-label">${q.type === 'likert' ? 'Scale Labels (e.g., Strongly Disagree, Disagree...)' : 'Options'}</label>
+                    <div class="space-y-2" data-question-id="${q.id}">
+                        ${q.options.map((opt, i) => `
+                            <div class="flex items-center gap-2">
+                                <input type="text" class="form-input" data-action="update-option" data-index="${i}" value="${opt}" placeholder="Option ${i + 1}">
+                                <button class="btn btn-danger" data-action="delete-option" data-index="${i}">${ICONS.trash}</button>
                             </div>
                         `).join('')}
-                    </main>
+                    </div>
+                    <button class="btn btn-secondary mt-2" data-action="add-option" data-question-id="${q.id}">+ Add Option</button>
                 </div>
-            </div>`;
-        UI.render(pages.responseDetail, html);
-    }
-
-    function renderConsentScreen(survey) {
-        const container = document.getElementById('survey-taker-container');
-        const html = `
-            <div class="bg-white p-8 rounded-xl shadow-lg text-center">
-                <h1 class="text-3xl font-extrabold text-gray-800 tracking-tight">${survey.metadata.title}</h1>
-                <p class="text-md text-gray-500 mt-2">${survey.metadata.university}</p>
-                <p class="text-md text-gray-600 font-semibold mt-1">by ${survey.metadata.researcher}</p>
-                <div class="mt-6 p-4 bg-gray-50 border rounded-md text-left">
-                    <h2 class="font-bold text-lg mb-2">Consent & Disclaimer</h2>
-                    <p class="text-gray-700 whitespace-pre-wrap">${survey.metadata.consent}</p>
-                </div>
-                <div class="flex flex-col sm:flex-row-reverse gap-4 mt-8">
-                     <button data-action="start-survey" data-id="${survey.id}" class="w-full px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity">
-                        Start Survey
-                    </button>
-                    <a href="#/dashboard" class="w-full sm:w-auto px-8 py-4 bg-gray-200 text-gray-800 font-bold rounded-lg text-lg hover:bg-gray-300 transition-colors">
-                        Cancel
-                    </a>
-                </div>
-            </div>`;
-        UI.render(container, html);
-    }
-    
-    function renderSurveyQuestionsForTaker(survey) {
-        const container = document.getElementById('survey-taker-container');
-        const html = `
-            <form id="survey-form" data-id="${survey.id}" novalidate>
-                ${survey.structure.map(q => `
-                    <div class="bg-white p-6 rounded-lg shadow-sm mb-4">
-                        <label class="block text-lg font-semibold text-gray-800 mb-1">
-                            ${q.text}
-                            ${q.isRequired ? '<span class="text-red-500 ml-1">*</span>' : ''}
+            ` : '';
+            
+            return `
+                <div class="glass-card question-card" draggable="true" data-question-id="${q.id}">
+                    <div class="drag-handle">${ICONS.drag}</div>
+                    <div class="flex justify-between items-start">
+                        <span class="text-sm uppercase text-secondary">${q.type.replace('_', ' ')}</span>
+                        <button class="btn btn-danger" data-action="delete-question" data-question-id="${q.id}">${ICONS.trash}</button>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Question Text</label>
+                        <input type="text" class="form-input" data-action="update-question-prop" data-prop="text" value="${q.text}" placeholder="Enter your question">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Helper Text (Optional)</label>
+                        <input type="text" class="form-input" data-action="update-question-prop" data-prop="helper" value="${q.helper || ''}" placeholder="Additional instructions">
+                    </div>
+                    ${optionsHtml}
+                    <div class="mt-4 pt-4 border-t border-glass-border flex items-center justify-end">
+                        <label class="flex items-center cursor-pointer">
+                            <span class="mr-3 font-medium">Required</span>
+                            <input type="checkbox" data-action="update-question-prop" data-prop="required" class="h-5 w-5" ${q.required ? 'checked' : ''}>
                         </label>
-                        ${q.description ? `<p class="text-sm text-gray-500 mb-3">${q.description}</p>` : ''}
-                        ${renderQuestionInput(q)}
-                    </div>
-                `).join('')}
-                 <button type="submit" class="mt-4 w-full px-8 py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity">
-                    Submit Response
-                </button>
-            </form>
-        `;
-        UI.render(container, html);
-    }
-
-    function renderQuestionInput(q) {
-        const name = `q-${q.id}`;
-        const required = q.isRequired ? 'required' : '';
-        const baseClasses = "w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500";
-        switch(q.type) {
-            case 'short_text':
-                return `<input type="text" name="${name}" ${required} class="${baseClasses}">`;
-            case 'long_text':
-                return `<textarea name="${name}" ${required} rows="4" class="${baseClasses}"></textarea>`;
-            case 'number':
-                return `<input type="number" name="${name}" ${required} class="${baseClasses}">`;
-            case 'date':
-                return `<input type="date" name="${name}" ${required} class="${baseClasses}">`;
-            case 'radio':
-                return `<div class="space-y-2">${q.options.map(opt => `
-                    <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
-                        <input type="radio" name="${name}" value="${opt}" ${required} class="h-5 w-5 text-blue-600 focus:ring-blue-500">
-                        <span class="ml-3 text-lg text-gray-700">${opt}</span>
-                    </label>`).join('')}</div>`;
-            case 'checkbox':
-                return `<div class="space-y-2">${q.options.map(opt => `
-                    <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
-                        <input type="checkbox" name="${name}" value="${opt}" class="h-5 w-5 text-blue-600 rounded focus:ring-blue-500">
-                        <span class="ml-3 text-lg text-gray-700">${opt}</span>
-                    </label>`).join('')}</div>`;
-            case 'dropdown':
-                 return `<select name="${name}" ${required} class="${baseClasses}">
-                    <option value="">Select an option</option>
-                    ${q.options.map(opt => `<option value="${opt}">${opt}</option>`).join('')}
-                 </select>`;
-            default: return '';
-        }
-    }
-
-
-    // --- Event Handlers ---
-    function setupEventListeners() {
-        // Use event delegation on the body for dynamically added elements
-        document.body.addEventListener('click', async (e) => {
-            const action = e.target.dataset.action;
-            const id = e.target.dataset.id;
-            const type = e.target.dataset.type;
-
-            // Auth form switching
-            if (e.target.id === 'show-signup') { e.preventDefault(); renderSignupForm(); }
-            if (e.target.id === 'show-login') { e.preventDefault(); renderLoginForm(); }
-            
-            // Legacy button
-            if (e.target.id === 'legacy-survey-btn') { Legacy.showPasswordPrompt(); }
-
-            // Logout
-            if (e.target.id === 'logout-btn') { Auth.logout(); }
-            
-            // Dashboard actions
-            if (e.target.closest('#page-dashboard')) {
-                if (e.target.id === 'new-survey-btn') { handleNewSurvey(); }
-                if (action === 'edit') { Router.navigate(`/builder/${id}`); }
-                if (action === 'delete') { handleDeleteSurvey(id); }
-                if (action === 'export') { handleExportSurvey(id); }
-                if (action === 'start-response') { Router.navigate(`/collect/${id}`); }
-                if (action === 'toggle-responses') { 
-                    const card = e.target.closest('.survey-card');
-                    card.classList.toggle('expanded');
-                }
-            }
-            
-            // Builder actions
-            if (e.target.closest('#page-builder')) {
-                const questionCard = e.target.closest('.question-card');
-                if (action === 'add-question') { handleAddQuestion(type); }
-                if (action === 'delete-question') { handleDeleteQuestion(questionCard.dataset.questionId); }
-                if (action === 'add-option') { handleAddOption(questionCard.dataset.questionId); }
-                if (action === 'delete-option') { handleDeleteOption(questionCard.dataset.questionId, e.target.dataset.optionIndex); }
-                if (action === 'show-settings') { handleShowSurveySettings(id); }
-                if (e.target.id === 'save-survey-btn') { handleSaveSurvey(); }
-            }
-
-            // Taker actions
-            if (e.target.closest('#page-taker')) {
-                if (action === 'start-survey') { 
-                    const survey = await DB.getSurvey(id);
-                    renderSurveyQuestionsForTaker(survey);
-                }
-            }
-        });
-        
-        document.body.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (e.target.id === 'login-form') {
-                const formData = new FormData(e.target);
-                await Auth.login(formData.get('email'), formData.get('password'));
-            }
-            if (e.target.id === 'signup-form') {
-                const formData = new FormData(e.target);
-                await Auth.signup(formData.get('name'), formData.get('email'), formData.get('password'));
-            }
-            if (e.target.id === 'survey-form') {
-                await handleSubmitSurveyResponse(e.target);
-            }
-        });
-
-        // Builder specific input handlers for autosaving
-        document.body.addEventListener('input', e => {
-            if (e.target.closest('#page-builder')) {
-                handleSaveSurvey();
-            }
-        });
-        document.body.addEventListener('change', e => {
-            if (e.target.closest('#page-builder') && e.target.dataset.action === 'update-question-required') {
-                handleSaveSurvey();
-            }
-        });
-
-        // Builder Drag and Drop
-        let draggedItem = null;
-        document.body.addEventListener('dragstart', e => {
-            if (e.target.classList.contains('question-card')) {
-                draggedItem = e.target;
-                setTimeout(() => e.target.classList.add('is-dragging'), 0);
-            }
-        });
-        document.body.addEventListener('dragend', e => {
-            if (e.target.classList.contains('question-card')) {
-                e.target.classList.remove('is-dragging');
-                draggedItem = null;
-            }
-        });
-        document.body.addEventListener('dragover', e => {
-            e.preventDefault();
-            if (e.target.classList.contains('drop-zone') || e.target.closest('.question-card')) {
-                e.target.closest('#question-container, .drop-zone').classList.add('drag-over');
-            }
-        });
-        document.body.addEventListener('dragleave', e => {
-            if (e.target.classList.contains('drop-zone') || e.target.closest('.question-card')) {
-                e.target.closest('#question-container, .drop-zone').classList.remove('drag-over');
-            }
-        });
-        document.body.addEventListener('drop', async e => {
-            e.preventDefault();
-            const dropTarget = e.target.closest('.question-card');
-            const questionContainer = document.getElementById('question-container');
-            if (!questionContainer || !draggedItem) return;
-            
-            questionContainer.classList.remove('drag-over');
-            document.querySelector('.drop-zone').classList.remove('drag-over');
-
-            if (dropTarget && draggedItem !== dropTarget) {
-                questionContainer.insertBefore(draggedItem, dropTarget);
-            } else if (e.target.classList.contains('drop-zone')) {
-                questionContainer.appendChild(draggedItem);
-            }
-            // Update the order in the database immediately
-            await handleSaveSurvey();
-        });
-    }
-
-    async function handleNewSurvey() {
-        const modalHtml = `
-        <div class="modal-overlay active">
-            <div class="modal-content">
-                <h2 class="text-2xl font-bold mb-4">Create New Survey</h2>
-                <form id="new-survey-form" class="space-y-4">
-                    <input type="text" name="university" placeholder="University/Organization Name" required class="w-full p-3 border rounded-md">
-                    <input type="text" name="researcher" placeholder="Researcher Name" value="${state.currentUser.name}" required class="w-full p-3 border rounded-md">
-                    <input type="text" name="title" placeholder="Project/Study Title" required class="w-full p-3 border rounded-md">
-                    <textarea name="consent" placeholder="Disclaimer/Consent Text" rows="5" required class="w-full p-3 border rounded-md"></textarea>
-                    <div class="flex justify-end space-x-4">
-                        <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''" class="px-4 py-2 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300">Cancel</button>
-                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">Create</button>
-                    </div>
-                </form>
-            </div>
-        </div>`;
-        UI.renderModal(modalHtml);
-        
-        document.getElementById('new-survey-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const surveyData = {
-                userId: state.currentUser.email,
-                metadata: {
-                    university: formData.get('university'),
-                    researcher: formData.get('researcher'),
-                    title: formData.get('title'),
-                    consent: formData.get('consent'),
-                },
-                settings: {
-                    closingDate: null,
-                    responseLimit: null,
-                },
-                structure: [], // Empty structure initially
-            };
-            const newId = await DB.saveSurvey(surveyData);
-            UI.closeModal();
-            Router.navigate(`/builder/${newId}`);
-        });
-    }
-
-    async function handleDeleteSurvey(id) {
-        if(confirm('Are you sure you want to delete this survey and all its responses? This cannot be undone.')) {
-            await DB.deleteSurvey(parseInt(id));
-            renderDashboardPage(); // Refresh dashboard
-        }
-    }
-    
-    async function handleExportSurvey(id) {
-        const survey = await DB.getSurvey(id);
-        const responses = await DB.getResponsesForSurvey(parseInt(id));
-        
-        if (responses.length === 0) {
-            alert("No responses to export.");
-            return;
-        }
-
-        const dataForSheet = responses.map(res => {
-            const flatResponse = {
-                'Response ID': res.id,
-                'Timestamp': new Date(res.timestamp).toLocaleString(),
-                ...res.data,
-            };
-            return flatResponse;
-        });
-
-        const ws = XLSX.utils.json_to_sheet(dataForSheet);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Responses');
-        const filename = `${survey.metadata.title.replace(/ /g, '_')}_export.xlsx`;
-        XLSX.writeFile(wb, filename);
-    }
-    
-    // --- Builder Logic ---
-
-    async function handleShowSurveySettings(id) {
-        const survey = await DB.getSurvey(parseInt(id));
-        const modalHtml = `
-        <div class="modal-overlay active">
-            <div class="modal-content">
-                <h2 class="text-2xl font-bold mb-4">Survey Settings</h2>
-                <form id="survey-settings-form" data-id="${id}" class="space-y-4">
-                    <div>
-                        <label for="closingDate" class="block text-gray-700">Closing Date (Optional)</label>
-                        <input type="date" name="closingDate" id="closingDate" value="${survey.settings?.closingDate || ''}" class="w-full p-3 border rounded-md mt-1">
-                    </div>
-                    <div>
-                        <label for="responseLimit" class="block text-gray-700">Response Limit (Optional)</label>
-                        <input type="number" name="responseLimit" id="responseLimit" min="1" placeholder="e.g., 100" value="${survey.settings?.responseLimit || ''}" class="w-full p-3 border rounded-md mt-1">
-                        <p class="text-sm text-gray-500 mt-1">Leave blank for no limit.</p>
-                    </div>
-                    <div class="flex justify-end space-x-4 pt-4">
-                        <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''" class="px-4 py-2 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300">Cancel</button>
-                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">Save Settings</button>
-                    </div>
-                </form>
-            </div>
-        </div>`;
-        UI.renderModal(modalHtml);
-        
-        document.getElementById('survey-settings-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const surveyId = e.target.dataset.id;
-            const surveyToUpdate = await DB.getSurvey(parseInt(surveyId));
-            const formData = new FormData(e.target);
-            
-            surveyToUpdate.settings = {
-                closingDate: formData.get('closingDate') || null,
-                responseLimit: formData.get('responseLimit') ? parseInt(formData.get('responseLimit')) : null,
-            };
-
-            await DB.saveSurvey(surveyToUpdate);
-            UI.closeModal();
-        });
-    }
-    
-    async function handleAddQuestion(type) {
-        const surveyId = document.querySelector('[data-survey-id]').dataset.surveyId;
-        const survey = await DB.getSurvey(surveyId);
-        const newQuestion = {
-            id: `q-${Date.now()}`,
-            type,
-            text: '',
-            description: '',
-            isRequired: true,
-            options: (type === 'radio' || type === 'checkbox' || type === 'dropdown') ? ['Option 1'] : [],
-        };
-        survey.structure.push(newQuestion);
-        await DB.saveSurvey(survey);
-        renderQuestions(survey.structure);
-    }
-
-    async function handleSaveSurvey() {
-        const container = document.querySelector('[data-survey-id]');
-        if (!container) return;
-        const surveyId = container.dataset.surveyId;
-        
-        const questionElements = [...document.querySelectorAll('.question-card')];
-        const newStructure = questionElements.map(card => {
-            const id = card.dataset.questionId;
-            const text = card.querySelector('[data-action="update-question-text"]').value;
-            const description = card.querySelector('[data-action="update-question-description"]').value;
-            const isRequired = card.querySelector('[data-action="update-question-required"]').checked;
-            const typeText = card.querySelector('.text-xs.uppercase').textContent.toLowerCase().replace(' ', '_');
-            
-            let options = [];
-            if (typeText === 'single_choice' || typeText === 'multi_choice' || typeText === 'dropdown') {
-                options = [...card.querySelectorAll('[data-action="update-option-text"]')].map(optEl => optEl.value);
-            }
-
-            // Map UI text back to stored type
-            const typeMap = { 'single_choice': 'radio', 'multi_choice': 'checkbox' };
-            const finalType = typeMap[typeText] || typeText;
-
-            return { id, text, description, isRequired, type: finalType, options };
-        });
-
-        const survey = await DB.getSurvey(surveyId);
-        survey.structure = newStructure;
-        await DB.saveSurvey(survey);
-        
-        const saveBtn = document.getElementById('save-survey-btn');
-        if (document.activeElement.closest('.question-card')) return; // Don't show feedback if user is still editing
-
-        const originalText = "Save Survey";
-        saveBtn.textContent = 'Saved!';
-        saveBtn.classList.remove('from-green-500', 'to-emerald-600');
-        saveBtn.classList.add('bg-green-600');
-        setTimeout(() => {
-            saveBtn.textContent = originalText;
-            saveBtn.classList.add('from-green-500', 'to-emerald-600');
-            saveBtn.classList.remove('bg-green-600');
-        }, 1500);
-    }
-    
-    async function handleDeleteQuestion(questionId) {
-        const surveyId = document.querySelector('[data-survey-id]').dataset.surveyId;
-        const survey = await DB.getSurvey(surveyId);
-        survey.structure = survey.structure.filter(q => q.id !== questionId);
-        await DB.saveSurvey(survey);
-        renderQuestions(survey.structure);
-    }
-
-    async function handleAddOption(questionId) {
-        const surveyId = document.querySelector('[data-survey-id]').dataset.surveyId;
-        const survey = await DB.getSurvey(surveyId);
-        const question = survey.structure.find(q => q.id === questionId);
-        if(question) {
-            question.options.push(`Option ${question.options.length + 1}`);
-            await DB.saveSurvey(survey);
-            renderQuestions(survey.structure);
-        }
-    }
-
-    async function handleDeleteOption(questionId, optionIndex) {
-        const surveyId = document.querySelector('[data-survey-id]').dataset.surveyId;
-        const survey = await DB.getSurvey(surveyId);
-        const question = survey.structure.find(q => q.id === questionId);
-        if(question) {
-            question.options.splice(optionIndex, 1);
-            await DB.saveSurvey(survey);
-            renderQuestions(survey.structure);
-        }
-    }
-    
-    // --- Taker Logic ---
-    async function handleSubmitSurveyResponse(form) {
-        const surveyId = parseInt(form.dataset.id);
-        const survey = await DB.getSurvey(surveyId);
-        const formData = new FormData(form);
-        const responseData = {};
-
-        let isValid = true;
-        survey.structure.forEach(q => {
-            const key = `q-${q.id}`;
-            const questionText = q.text;
-            let value;
-            if (q.type === 'checkbox') {
-                value = formData.getAll(key).join(', ');
-            } else {
-                value = formData.get(key);
-            }
-            responseData[questionText] = value;
-            if(q.isRequired && !value) {
-                isValid = false;
-            }
-        });
-
-        if (!isValid) {
-            alert('Please fill out all required fields.');
-            return;
-        }
-
-        await DB.addResponse({
-            surveyId,
-            timestamp: Date.now(),
-            data: responseData,
-        });
-        
-        Router.navigate('/dashboard');
-        // Future improvement: show a toast notification on the dashboard.
-    }
-
-    // --- LEGACY MODULE (Original App) ---
-    const Legacy = {
-        // ... (The entire logic of the original script.js will be placed here)
-        init() {
-            // This is where the old app's logic will be self-contained.
-            // It will continue to use localStorage and its own routing/rendering.
-        },
-        showPasswordPrompt() {
-            const modalHtml = `
-            <div class="modal-overlay active">
-                <div class="modal-content">
-                    <h2 class="text-2xl font-bold mb-4">Access Legacy Proforma</h2>
-                    <p class="text-gray-600 mb-4">This section is password protected.</p>
-                    <form id="legacy-password-form" class="space-y-4">
-                        <input type="password" name="password" placeholder="Enter Password" required class="w-full p-3 border rounded-md">
-                        <div class="flex justify-end space-x-4">
-                            <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''" class="px-4 py-2 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300">Cancel</button>
-                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">Access</button>
-                        </div>
-                    </form>
-                </div>
-            </div>`;
-            UI.renderModal(modalHtml);
-            
-            document.getElementById('legacy-password-form').addEventListener('submit', (e) => {
-                e.preventDefault();
-                const password = e.target.password.value;
-                if (password === '@Shah5020') {
-                    UI.closeModal();
-                    // Load the legacy app
-                    this.loadLegacyApp();
-                } else {
-                    alert('Incorrect password.');
-                }
-            });
-        },
-        
-        loadLegacyApp() {
-            console.log("Loading Legacy Application...");
-            // Hide the new app's header actions
-            navActions.classList.add('hidden');
-            
-            // The entire logic from the original script.js goes here,
-            // adapted to run on-demand instead of on DOMContentLoaded.
-            
-            // --- COPY OF ORIGINAL SCRIPT.JS ---
-            const originalScriptExecution = () => {
-                // ... The full, unmodified code from the user's initial `script.js`
-                // is placed inside this function. I will paste it in now.
-    
-                // --- ENUMS & CONSTANTS ---
-                const QuestionType = {
-                    TEXT: 'text',
-                    NUMBER: 'number',
-                    RADIO: 'radio',
-                };
-
-                const UserIcon = ({ className = "w-6 h-6" } = {}) => `<svg xmlns="http://www.w3.org/2000/svg" class="${className}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>`;
-                const MapPinIcon = ({ className = "w-6 h-6" } = {}) => `<svg xmlns="http://www.w3.org/2000/svg" class="${className}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>`;
-                const MegaphoneIcon = ({ className = "w-6 h-6" } = {}) => `<svg xmlns="http://www.w3.org/2000/svg" class="${className}" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z" /></svg>`;
-                const UsersIcon = ({ className = "w-6 h-6" } = {}) => `<svg xmlns="http://www.w3.org/2000/svg" class="${className}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.653-.122-1.28-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.653.122-1.28.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>`;
-                const BuildingLibraryIcon = ({ className = "w-6 h-6" } = {}) => `<svg xmlns="http://www.w3.org/2000/svg" class="${className}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>`;
-                const NoteIcon = ({ className = "w-6 h-6" } = {}) => `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="${className}"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>`;
-                const iconMap = { UserIcon, MapPinIcon, MegaphoneIcon, UsersIcon, BuildingLibraryIcon, NoteIcon };
-
-                const SURVEY_STRUCTURE = [
-                  { id: 'demographic', title: 'DEMOGRAPHIC INFORMATION', icon: 'UserIcon', questions: [
-                      { id: 'name', text: 'Name of respondent', type: QuestionType.TEXT, required: false },
-                      { id: 'age', text: 'Age', type: QuestionType.NUMBER, required: true },
-                      { id: 'gender', text: 'Gender', type: QuestionType.RADIO, options: ['Male', 'Female'], required: true },
-                      { id: 'education_level', text: 'Education level', type: QuestionType.RADIO, options: ['No formal education', 'Primary', 'Secondary', 'Higher'], required: true },
-                      { id: 'occupation', text: 'Occupation', type: QuestionType.TEXT, required: true },
-                      { id: 'monthly_income', text: 'Monthly household income', type: QuestionType.RADIO, options: ['<15,000 PKR', '15,000-30,000 PKR', '>30,000 PKR'], required: true },
-                      { id: 'children_under_2', text: 'Total number of children under 2 years', type: QuestionType.NUMBER, required: true },
-                      { id: 'youngest_child_age', text: 'Age of youngest child', type: QuestionType.TEXT, required: true },
-                  ] },
-                  { id: 'geographic', title: 'GEOGRAPHIC AND ACCESS BARRIERS', icon: 'MapPinIcon', questions: [
-                      { id: 'distance_to_center', text: 'Distance to nearest vaccination center', type: QuestionType.RADIO, options: ['<2 km', '2-5 km', '>5 km'], required: true },
-                      { id: 'transport_mode', text: 'Mode of transport to vaccination center', type: QuestionType.RADIO, options: ['Walk', 'Motorbike', 'Public transport', 'Private car'], required: true },
-                      { id: 'travel_cost', text: 'Average cost of travel to vaccination center', type: QuestionType.NUMBER, required: true },
-                      { id: 'services_regular', text: 'Are vaccination services available regularly in your area?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'mobile_team_visit', text: 'Have you been visited by a mobile vaccination team?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'seasonal_access', text: 'Are vaccination centers accessible during monsoon/winter seasons?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'nomadic_difficulties', text: 'Do nomadic families in your area face difficulties accessing vaccination?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'enough_centers_remote', text: 'Are there enough vaccination centers in remote areas of Awaran?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'geo_challenges', text: 'Do geographical challenges prevent regular vaccination services?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'transport_barrier', text: 'Is transportation a major barrier to vaccination in your area?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                  ]},
-                  { id: 'awareness', title: 'AWARENESS AND INFORMATION SOURCES', icon: 'MegaphoneIcon', questions: [
-                      { id: 'know_vaccine_purpose', text: 'Do you know the purpose of each vaccine given to children?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'vaccine_info_source', text: 'Main source of vaccine information', type: QuestionType.RADIO, options: ['Lady Health Worker', 'Health facility', 'Media', 'Religious leader', 'Family'], required: true },
-                      { id: 'vaccine_safety_belief', text: 'Do you believe vaccines are safe for children?', type: QuestionType.RADIO, options: ['Yes', 'No', 'Not sure'], required: true },
-                      { id: 'language_barrier', text: 'Do you face language barriers when health workers explain vaccines?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'heard_rumors', text: 'Have you heard rumors or misconceptions about vaccines?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'awareness_campaigns', text: 'Are there awareness campaigns about vaccination in your area?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'know_schedule', text: 'Do you know the complete vaccination schedule for children under 2 years?', type: QuestionType.RADIO, options: ['Yes', 'No', 'Partially'], required: true },
-                      { id: 'received_reminders', text: 'Have you ever received SMS or phone reminders for vaccination?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                  ] },
-                  { id: 'cultural', title: 'CULTURAL AND RELIGIOUS FACTORS', icon: 'UsersIcon', questions: [
-                      { id: 'cultural_discouragement', text: 'Are there cultural beliefs in your community that discourage vaccination?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'gender_differential_treatment', text: 'Do families in Awaran treat vaccination differently for boys and girls?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'religious_leaders_opinion', text: 'What do religious leaders in your community say about vaccination?', type: QuestionType.RADIO, options: ['Support', 'Oppose', 'Neutral'], required: true },
-                      { id: 'male_permission_needed', text: 'Do women need male family member\'s permission for child vaccination?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'traditional_healers_influence', text: 'Are there traditional healers who influence vaccination decisions?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'tribal_customs_affect', text: 'Do tribal customs affect vaccination acceptance in your area?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'vaccines_against_religion', text: 'Have you heard that vaccines are against religious beliefs?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'older_family_members_support', text: 'Do older family members support or discourage vaccination?', type: QuestionType.RADIO, options: ['Support', 'Discourage', 'Neutral'], required: true },
-                  ] },
-                  { id: 'health_system', title: 'HEALTH SYSTEM AND SERVICE QUALITY', icon: 'BuildingLibraryIcon', questions: [
-                      { id: 'rate_health_worker_behavior', text: 'How would you rate the behavior of health workers during vaccination?', type: QuestionType.RADIO, options: ['Good', 'Fair', 'Poor'], required: true },
-                      { id: 'service_hours_convenient', text: 'Are vaccination service hours convenient for your family?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'refused_services', text: 'Have you ever been refused vaccination services?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'trust_govt_vaccines', text: 'Do you trust vaccines provided at government health centers?', type: QuestionType.RADIO, options: ['Yes', 'No', 'Not sure'], required: true },
-                      { id: 'experienced_stock_outs', text: 'Have you experienced vaccine stock-outs at health facilities?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                      { id: 'recommend_vaccination', text: 'Would you recommend vaccination to other parents in Awaran?', type: QuestionType.RADIO, options: ['Yes', 'No'], required: true },
-                  ] },
-                ];
-                const RESPONSES_KEY = 'surveyResponses';
-
-                let responses = [];
-                let surveyState = {};
-                
-                const legacyPages = {
-                    home: document.querySelector('#page-legacy-survey #page-home'),
-                    survey: document.querySelector('#page-legacy-survey #page-survey'),
-                    responses: document.querySelector('#page-legacy-responses #page-responses'),
-                    responseDetail: document.querySelector('#page-legacy-response-detail'),
-                };
-                
-                const deleteModal = document.querySelector('#page-legacy-survey #delete-confirm-modal');
-                
-                const loadResponses = () => {
-                    const stored = localStorage.getItem(RESPONSES_KEY);
-                    responses = stored ? JSON.parse(stored) : [];
-                };
-
-                const saveResponses = () => {
-                    localStorage.setItem(RESPONSES_KEY, JSON.stringify(responses));
-                };
-                
-                const addResponse = (response) => {
-                    responses.push(response);
-                    saveResponses();
-                };
-
-                const deleteResponse = (participantId) => {
-                    responses = responses.filter(r => r.participantId !== participantId);
-                    saveResponses();
-                    renderLegacyResponsesPage();
-                };
-
-                const renderLegacyHomePage = () => {
-                    document.querySelector('#page-legacy-survey #total-responses').textContent = responses.length;
-                    const lastDateElem = document.querySelector('#page-legacy-survey #last-collection-date');
-                    if (responses.length > 0) {
-                        const latestResponse = [...responses].sort((a, b) => b.timestamp - a.timestamp)[0];
-                        lastDateElem.textContent = new Date(latestResponse.timestamp).toLocaleDateString();
-                    } else {
-                        lastDateElem.textContent = 'N/A';
-                    }
-                };
-                
-                const renderLegacyResponsesPage = () => {
-                    const container = document.querySelector('#page-legacy-responses #responses-list-container');
-                    const emptyState = document.querySelector('#page-legacy-responses #responses-empty-state');
-                    const exportButtons = document.querySelector('#page-legacy-responses #responses-export-buttons');
-
-                    document.querySelector('#page-legacy-responses #responses-count').textContent = `${responses.length} response(s) found.`;
-                    
-                    if (responses.length === 0) {
-                        container.innerHTML = '';
-                        emptyState.style.display = 'block';
-                        exportButtons.querySelectorAll('button').forEach(btn => btn.disabled = true);
-                    } else {
-                        emptyState.style.display = 'none';
-                        exportButtons.querySelectorAll('button').forEach(btn => btn.disabled = false);
-                        container.innerHTML = [...responses].reverse().map(response => `
-                            <div class="bg-white p-4 rounded-lg shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                                <div class="flex-grow">
-                                    <p class="font-bold text-lg text-blue-700">${response.participantId}</p>
-                                    <p class="text-sm text-gray-500">Collected on: ${new Date(response.timestamp).toLocaleString()}</p>
-                                    <p class="text-sm text-gray-500">Location (Tehsil): ${response.notes.tehsil}</p>
-                                </div>
-                                <div class="flex items-center space-x-2 mt-4 sm:mt-0">
-                                    <a href="#/legacy/responses/${response.participantId}" class="px-4 py-2 bg-blue-100 text-blue-800 font-semibold rounded-lg text-sm hover:bg-blue-200 transition-colors">
-                                        View Details
-                                    </a>
-                                    <button data-id="${response.participantId}" class="legacy-delete-btn p-2 text-red-500 hover:bg-red-100 rounded-full transition-colors">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-                        `).join('');
-                    }
-                };
-                
-                const renderLegacyResponseDetailPage = (id) => {
-                    const response = responses.find(r => r.participantId === id);
-                    if (!response) {
-                        window.location.hash = '#/legacy/responses';
-                        return;
-                    }
-
-                    const container = pages.legacyResponseDetail;
-                    let sectionsHtml = SURVEY_STRUCTURE.map(section => `
-                        <section key="${section.id}" class="bg-white p-6 rounded-lg shadow-sm">
-                            <h2 class="text-2xl font-bold text-gray-800 border-b pb-3 mb-4 flex items-center">
-                                <div class="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
-                                    ${iconMap[section.icon]({ className: "w-6 h-6" })}
-                                </div>
-                                ${section.title}
-                            </h2>
-                            <div class="space-y-4">
-                                ${section.questions.map(q => `
-                                    <div key="${q.id}" class="flex flex-col sm:flex-row sm:justify-between py-2 border-b last:border-b-0">
-                                        <p class="text-gray-600 sm:w-2/3">${q.text}</p>
-                                        <p class="font-semibold text-gray-900 text-left sm:text-right mt-1 sm:mt-0">${String(response.answers[q.id] ?? 'Not answered')}</p>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </section>
-                    `).join('');
-
-                    container.innerHTML = `
-                        <div class="max-w-4xl mx-auto">
-                            <header class="mb-8">
-                                <h1 class="text-4xl font-extrabold text-gray-800 tracking-tight">Response Details</h1>
-                                <p class="text-lg text-gray-600 mt-2">
-                                    Participant ID: <span class="font-semibold text-blue-700">${response.participantId}</span>
-                                </p>
-                                <p class="text-md text-gray-500">
-                                    Collected on: ${new Date(response.timestamp).toLocaleString()}
-                                </p>
-                            </header>
-
-                            <div class="sticky top-16 bg-slate-100 py-4 z-10 -mx-4 px-4 border-b mb-6">
-                                <div class="max-w-4xl mx-auto flex items-center justify-between">
-                                    <a href="#/legacy/responses" class="px-5 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg text-base hover:bg-gray-100 transition-colors">
-                                        &larr; Back to List
-                                    </a>
-                                </div>
-                            </div>
-
-                            <main class="space-y-8">
-                                <section class="bg-white p-6 rounded-lg shadow-sm">
-                                    <h2 class="text-2xl font-bold text-gray-800 border-b pb-3 mb-4 flex items-center">
-                                        <div class="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
-                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
-                                        </div>
-                                        Survey Notes
-                                    </h2>
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-lg">
-                                        <div><strong class="text-gray-600 font-medium">Language:</strong> ${response.notes.language}</div>
-                                        <div><strong class="text-gray-600 font-medium">Tehsil:</strong> ${response.notes.tehsil}</div>
-                                        <div class="col-span-1 md:col-span-2"><strong class="text-gray-600 font-medium">Observations:</strong> ${response.notes.observations || 'N/A'}</div>
-                                    </div>
-                                </section>
-                                ${sectionsHtml}
-                            </main>
-                        </div>
-                    `;
-                };
-
-                const startLegacySurvey = () => {
-                    surveyState = {
-                        currentSectionIndex: 0,
-                        answers: {},
-                        notes: { language: '', tehsil: '', observations: '' },
-                        errors: [],
-                    };
-                    renderLegacySurveySection();
-                };
-                
-                const renderLegacySurveySection = () => {
-                    const { currentSectionIndex, answers, notes, errors } = surveyState;
-                    const totalSections = SURVEY_STRUCTURE.length;
-                    const isNotesSection = currentSectionIndex === totalSections;
-
-                    const headerContainer = document.querySelector('#page-legacy-survey #survey-header');
-                    const mainContainer = document.querySelector('#page-legacy-survey #survey-main');
-                    
-                    const percentage = (currentSectionIndex / (totalSections + 1)) * 100;
-                    const progressBar = `<div class="w-full bg-gray-200 rounded-full h-2.5 my-4"><div class="bg-gradient-to-r from-blue-500 to-purple-600 h-2.5 rounded-full transition-all duration-500" style="width: ${percentage}%"></div></div>`;
-
-                    let headerContent, mainContent;
-                    
-                    if (isNotesSection) {
-                        headerContent = `<div class="flex items-center space-x-4 p-4 bg-white rounded-lg shadow-sm"><div class="bg-gradient-to-br from-blue-500 to-purple-600 p-3 rounded-lg text-white">${NoteIcon({className: "w-8 h-8"})}</div><div><h1 class="text-3xl font-bold text-gray-800">Survey Notes</h1><p class="text-gray-500">Section ${currentSectionIndex + 1} of ${totalSections + 1}</p></div></div>`;
-                        mainContent = `<div class="bg-white p-6 rounded-lg shadow-sm space-y-6"><div><label class="block text-lg font-semibold text-gray-800 mb-2">Language of Interview <span class="text-red-500">*</span></label><input type="text" id="note-language" value="${notes.language}" class="w-full p-3 border rounded-lg text-lg focus:ring-2 focus:ring-blue-500 ${errors.includes('language') ? 'border-red-400' : 'border-gray-300'}" /></div><div><label class="block text-lg font-semibold text-gray-800 mb-2">Geographic Location (Tehsil) <span class="text-red-500">*</span></label><input type="text" id="note-tehsil" value="${notes.tehsil}" class="w-full p-3 border rounded-lg text-lg focus:ring-2 focus:ring-blue-500 ${errors.includes('tehsil') ? 'border-red-400' : 'border-gray-300'}" /></div><div><label class="block text-lg font-semibold text-gray-800 mb-2">Additional Observations (Optional)</label><textarea id="note-observations" rows="5" class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500">${notes.observations}</textarea></div></div>`;
-                    } else {
-                        const section = SURVEY_STRUCTURE[currentSectionIndex];
-                        headerContent = `<div class="flex items-center space-x-4 p-4 bg-white rounded-lg shadow-sm"><div class="bg-gradient-to-br from-blue-500 to-purple-600 p-3 rounded-lg text-white">${iconMap[section.icon]({ className: "w-8 h-8" })}</div><div><h1 class="text-3xl font-bold text-gray-800">${section.title}</h1><p class="text-gray-500">Section ${currentSectionIndex + 1} of ${totalSections + 1}</p></div></div>`;
-                        mainContent = section.questions.map(q => {
-                            const value = answers[q.id] || '';
-                            const error = errors.includes(q.id);
-                            let inputHtml = '';
-                            switch (q.type) {
-                                case QuestionType.TEXT: inputHtml = `<input type="text" data-id="${q.id}" value="${value}" class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500">`; break;
-                                case QuestionType.NUMBER: inputHtml = `<input type="number" data-id="${q.id}" value="${value}" class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500">`; break;
-                                case QuestionType.RADIO: inputHtml = `<div class="space-y-3">${q.options.map(opt => `<label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50"><input type="radio" data-id="${q.id}" name="${q.id}" value="${opt}" ${value === opt ? 'checked' : ''} class="h-5 w-5 text-blue-600 focus:ring-blue-500"><span class="ml-3 text-lg text-gray-700">${opt}</span></label>`).join('')}</div>`; break;
-                            }
-                            return `<div class="bg-white p-6 rounded-lg shadow-sm mb-4 border-2 ${error ? 'border-red-400' : 'border-transparent'}"><label class="block text-lg font-semibold text-gray-800 mb-3">${q.text} ${q.required ? '<span class="text-red-500">*</span>' : ''}</label>${inputHtml}</div>`;
-                        }).join('');
-                    }
-                    
-                    headerContainer.innerHTML = progressBar + headerContent;
-                    mainContainer.innerHTML = mainContent;
-                    
-                    document.querySelector('#page-legacy-survey #survey-prev-btn').disabled = currentSectionIndex === 0;
-                    document.querySelector('#page-legacy-survey #survey-next-btn').style.display = isNotesSection ? 'none' : 'block';
-                    document.querySelector('#page-legacy-survey #survey-submit-btn').style.display = isNotesSection ? 'block' : 'none';
-                };
-                
-                const validateLegacySurveySection = () => {
-                    const { currentSectionIndex } = surveyState;
-                    if (currentSectionIndex === SURVEY_STRUCTURE.length) {
-                        surveyState.notes.language = document.getElementById('note-language').value;
-                        surveyState.notes.tehsil = document.getElementById('note-tehsil').value;
-                        const noteErrors = [];
-                        if (!surveyState.notes.language) noteErrors.push('language');
-                        if (!surveyState.notes.tehsil) noteErrors.push('tehsil');
-                        surveyState.errors = noteErrors;
-                        return noteErrors.length === 0;
-                    }
-
-                    const missingFields = SURVEY_STRUCTURE[currentSectionIndex].questions
-                        .filter(q => q.required && (surveyState.answers[q.id] === undefined || surveyState.answers[q.id] === ''))
-                        .map(q => q.id);
-                    surveyState.errors = missingFields;
-                    return missingFields.length === 0;
-                };
-
-                const legacyRouter = () => {
-                    Object.values(pages).forEach(p => p.classList.remove('active'));
-                    Object.values(legacyPages).forEach(p => p.parentElement.classList.remove('active'));
-                    
-                    const path = window.location.hash.slice(1) || '/';
-                    const [url, id] = path.split('/').filter(p => p !== 'legacy');
-
-                    if (url === 'survey') {
-                        pages.legacySurvey.classList.add('active');
-                        legacyPages.home.style.display = 'none';
-                        legacyPages.survey.style.display = 'block';
-                        startLegacySurvey();
-                    } else if (url === 'responses' && id) {
-                        pages.legacyResponseDetail.classList.add('active');
-                        renderLegacyResponseDetailPage(id);
-                    } else if (url === 'responses') {
-                        pages.legacyResponses.classList.add('active');
-                        renderLegacyResponsesPage();
-                    } else {
-                        pages.legacySurvey.classList.add('active');
-                        legacyPages.home.style.display = 'block';
-                        legacyPages.survey.style.display = 'none';
-                        renderLegacyHomePage();
-                    }
-                };
-
-                loadResponses();
-                if (!window.location.hash || !window.location.hash.startsWith('#/legacy')) {
-                    window.location.hash = '#/legacy/';
-                }
-                legacyRouter();
-                
-                // --- SETUP LISTENERS for the legacy part ---
-                // We cannot use the main event delegation as it might conflict.
-                // Re-attach specific listeners.
-                window.addEventListener('hashchange', legacyRouter);
-
-                document.getElementById('page-legacy-responses').addEventListener('click', (e) => {
-                     if (e.target.matches('.legacy-delete-btn')) {
-                        const id = e.target.dataset.id;
-                        const modal = document.querySelector('#page-legacy-responses #delete-confirm-modal');
-                        modal.classList.add('active');
-                        modal.dataset.id = id;
-                    }
-                });
-
-                document.querySelector('#page-legacy-responses #cancel-delete-btn')?.addEventListener('click', () => {
-                     document.querySelector('#page-legacy-responses #delete-confirm-modal').classList.remove('active');
-                });
-                
-                document.querySelector('#page-legacy-responses #confirm-delete-btn')?.addEventListener('click', () => {
-                    const modal = document.querySelector('#page-legacy-responses #delete-confirm-modal');
-                    const id = modal.dataset.id;
-                    if (id) deleteResponse(id);
-                    modal.classList.remove('active');
-                });
-                
-                document.querySelector('#page-legacy-responses #export-csv-btn')?.addEventListener('click', () => Legacy.exportToCsv(responses));
-                document.querySelector('#page-legacy-responses #export-excel-btn')?.addEventListener('click', () => Legacy.exportToExcel(responses));
-                
-                document.querySelector('#page-legacy-survey #survey-next-btn')?.addEventListener('click', () => {
-                    if (validateLegacySurveySection()) { surveyState.currentSectionIndex++; renderLegacySurveySection(); } else { renderLegacySurveySection(); }
-                });
-                document.querySelector('#page-legacy-survey #survey-prev-btn')?.addEventListener('click', () => {
-                    if (surveyState.currentSectionIndex > 0) { surveyState.currentSectionIndex--; renderLegacySurveySection(); }
-                });
-                document.querySelector('#page-legacy-survey #survey-submit-btn')?.addEventListener('click', () => {
-                     if (validateLegacySurveySection()) {
-                        addResponse({ participantId: `P-${Date.now()}`, timestamp: Date.now(), answers: surveyState.answers, notes: surveyState.notes });
-                        window.location.hash = '#/legacy/';
-                    } else { renderLegacySurveySection(); }
-                });
-                document.getElementById('page-legacy-survey').addEventListener('input', (e) => {
-                    const target = e.target;
-                    const id = target.dataset.id;
-                    if (id) {
-                         const value = target.type === 'number' ? target.valueAsNumber || '' : target.value;
-                         surveyState.answers[id] = value;
-                    }
-                });
-
-            };
-            
-            this.prepareLegacyDOM();
-            originalScriptExecution();
-        },
-        
-        prepareLegacyDOM() {
-            // The original script assumes its HTML is readily available.
-            // We need to inject the original HTML structure into the legacy page containers.
-            pages.legacySurvey.innerHTML = `
-                <!-- HomePage -->
-                <div id="page-home" class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8" style="display:block;">
-                    <div class="max-w-4xl mx-auto">
-                        <header class="mb-8"><h1 class="text-4xl font-extrabold text-gray-800 tracking-tight">Dashboard</h1><p class="text-lg text-gray-600 mt-2">Welcome to your field research portal.</p></header>
-                        <section class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-                            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center space-x-4">
-                                <div class="bg-blue-100 text-blue-600 p-3 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></div>
-                                <div><p class="text-sm font-medium text-gray-500">Total Responses Collected</p><p id="total-responses" class="text-2xl font-bold text-gray-800">0</p></div>
-                            </div>
-                            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center space-x-4">
-                                <div class="bg-blue-100 text-blue-600 p-3 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg></div>
-                                <div><p class="text-sm font-medium text-gray-500">Last Collection Date</p><p id="last-collection-date" class="text-2xl font-bold text-gray-800">N/A</p></div>
-                            </div>
-                        </section>
-                        <section>
-                            <h2 class="text-2xl font-bold text-gray-700 mb-4">Actions</h2>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <a href="#/legacy/survey" class="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center">
-                                    <div class="bg-purple-100 text-purple-600 p-4 rounded-full mb-4"><svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div>
-                                    <h3 class="text-lg font-bold text-gray-800">Start New Survey</h3><p class="text-sm text-gray-500 mt-1">Begin a new data collection session.</p>
-                                </a>
-                                <a href="#/legacy/responses" class="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center">
-                                    <div class="bg-purple-100 text-purple-600 p-4 rounded-full mb-4"><svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg></div>
-                                    <h3 class="text-lg font-bold text-gray-800">View & Export Responses</h3><p class="text-sm text-gray-500 mt-1">Review collected data and export for analysis.</p>
-                                </a>
-                            </div>
-                        </section>
                     </div>
                 </div>
-                <!-- SurveyPage -->
-                <div id="page-survey" class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8" style="display:none;">
-                    <div class="max-w-3xl mx-auto"><header id="survey-header" class="mb-4"></header><main id="survey-main" class="mt-8"></main><footer class="mt-8 flex justify-between items-center"><button id="survey-prev-btn" class="px-8 py-4 bg-gray-300 text-gray-800 font-bold rounded-lg text-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-400 transition-colors">Previous</button><button id="survey-next-btn" class="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity">Next</button><button id="survey-submit-btn" class="px-8 py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity" style="display: none;">Submit Survey</button></footer></div>
-                </div>`;
-            
-            pages.legacyResponses.innerHTML = `
-                <div id="page-responses" class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
-                    <div class="max-w-4xl mx-auto">
-                        <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
-                            <div><h1 class="text-4xl font-extrabold text-gray-800 tracking-tight">Collected Responses</h1><p id="responses-count" class="text-lg text-gray-600 mt-2">0 response(s) found.</p></div>
-                            <div id="responses-export-buttons" class="flex space-x-2 mt-4 sm:mt-0">
-                                <a href="#/legacy/" class="px-5 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg text-base hover:bg-gray-100 transition-colors">Back to Home</a>
-                                <button id="export-csv-btn" class="px-5 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg text-base disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity">Export All as CSV</button>
-                                <button id="export-excel-btn" class="px-5 py-3 bg-green-600 text-white font-bold rounded-lg text-base disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-700 transition-opacity">Export All as Excel</button>
-                            </div>
-                        </header>
-                        <main id="responses-list-container" class="space-y-4"></main>
-                        <div id="responses-empty-state" class="text-center py-16 bg-white rounded-lg shadow-sm" style="display: none;"><svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-16 w-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg><h3 class="mt-4 text-xl font-semibold text-gray-800">No responses yet</h3><p class="mt-1 text-gray-500">Start a new survey to collect data.</p><a href="#/legacy/survey" class="mt-6 inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg hover:opacity-90 transition-opacity">Start New Survey</a></div>
-                        <div id="delete-confirm-modal" class="modal-overlay"><div class="bg-white p-8 rounded-lg shadow-2xl max-w-sm w-full mx-4"><h2 class="text-xl font-bold mb-4">Confirm Deletion</h2><p class="text-gray-600 mb-6">Are you sure you want to delete this response? This action cannot be undone.</p><div class="flex justify-end space-x-4"><button id="cancel-delete-btn" class="px-4 py-2 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300">Cancel</button><button id="confirm-delete-btn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700">Delete</button></div></div></div>
-                    </div>
-                </div>`;
-            
-            pages.legacyResponseDetail.innerHTML = `
-                <div id="page-response-detail" class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8"></div>
             `;
         },
-        exportToCsv(responses) {
-            const allQuestions = Legacy.SURVEY_STRUCTURE.flatMap(s => s.questions);
-            const headers = ['participantId', 'timestamp', ...allQuestions.map(q => q.text)];
-            const csv = [
-                headers.join(','),
-                ...responses.map(r => [
-                    r.participantId,
-                    new Date(r.timestamp).toISOString(),
-                    ...allQuestions.map(q => `"${String(r.answers[q.id] || '').replace(/"/g, '""')}"`)
-                ].join(','))
-            ].join('\n');
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.setAttribute('download', 'legacy_survey_responses.csv');
-            link.click();
+        
+        async renderTaker(surveyId) {
+            const survey = await DB.getSurvey(parseInt(surveyId));
+            if (!survey) {
+                this.renderPage(`<div class="page text-center"><h2 class="page-title">Survey not found.</h2><a href="#/" class="btn btn-primary mt-4">Go Home</a></div>`);
+                return;
+            }
+            
+            // Start with the disclaimer screen
+            const disclaimerHtml = `
+                <div class="page taker-container" id="taker-disclaimer">
+                    <div class="glass-card text-center">
+                        <h2 class="text-2xl font-bold">${survey.metadata.title}</h2>
+                        <p class="text-secondary mt-2">${survey.metadata.university} by ${survey.metadata.researcher}</p>
+                        <div class="my-6 p-4 bg-black bg-opacity-20 rounded-lg text-left">
+                            <h3 class="font-bold mb-2">Consent & Disclaimer</h3>
+                            <p class="whitespace-pre-wrap">${survey.metadata.consent}</p>
+                        </div>
+                        <div class="flex gap-4 justify-center">
+                            <a href="#/" class="btn btn-secondary">Cancel</a>
+                            <button class="btn btn-primary" data-action="start-survey" data-survey-id="${survey.id}">I Agree, Start Survey</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            this.renderPage(disclaimerHtml);
         },
-        exportToExcel(responses) {
-            const dataForSheet = responses.map(response => {
-                const flatResponse = {
-                    'Participant ID': response.participantId,
-                    'Timestamp': new Date(response.timestamp).toLocaleString(),
-                };
-                Legacy.SURVEY_STRUCTURE.forEach(section => {
-                    section.questions.forEach(q => {
-                        flatResponse[q.text] = response.answers[q.id] ?? '';
-                    });
-                });
-                return flatResponse;
-            });
-            const ws = XLSX.utils.json_to_sheet(dataForSheet);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Responses');
-            XLSX.writeFile(wb, 'legacy_survey_responses.xlsx');
+
+        renderTakerQuestion(survey, questionIndex, answers) {
+            const question = survey.questions[questionIndex];
+            const progress = ((questionIndex) / survey.questions.length) * 100;
+            const answer = answers[question.id] || '';
+
+            let inputHtml = '';
+            switch(question.type) {
+                case 'short_text': inputHtml = `<input type="text" name="${question.id}" class="form-input" value="${answer}">`; break;
+                case 'long_text': inputHtml = `<textarea name="${question.id}" class="form-textarea">${answer}</textarea>`; break;
+                case 'number': inputHtml = `<input type="number" name="${question.id}" class="form-input" value="${answer}">`; break;
+                case 'date': inputHtml = `<input type="date" name="${question.id}" class="form-input" value="${answer}">`; break;
+                case 'radio':
+                case 'dropdown':
+                    inputHtml = question.options.map(opt => `
+                        <label class="taker-option-label"><input type="radio" name="${question.id}" value="${opt}" ${answer === opt ? 'checked' : ''}> ${opt}</label>
+                    `).join('');
+                    break;
+                case 'checkbox':
+                    inputHtml = question.options.map(opt => `
+                        <label class="taker-option-label"><input type="checkbox" name="${question.id}" value="${opt}" ${(answer || []).includes(opt) ? 'checked' : ''}> ${opt}</label>
+                    `).join('');
+                    break;
+                case 'rating':
+                    inputHtml = `<div class="rating-stars" data-question-id="${question.id}">${[1,2,3,4,5].map(i => `<span class="star ${i <= answer ? 'selected' : ''}" data-value="${i}">★</span>`).join('')}</div>
+                               <input type="hidden" name="${question.id}" value="${answer}">`;
+                    break;
+                case 'likert':
+                    inputHtml = `<div class="likert-scale">
+                        ${question.options.map((opt, i) => `
+                            <label><input type="radio" name="${question.id}" value="${i+1}" class="sr-only" ${answer == (i+1) ? 'checked' : ''}><span class="likert-label">${opt}</span></label>
+                        `).join('')}
+                    </div>`;
+                    break;
+            }
+
+            const pageHtml = `
+                <div class="page taker-container" id="taker-question" data-survey-id="${survey.id}" data-question-index="${questionIndex}">
+                    <div class="taker-progress"><div class="taker-progress-bar" style="width: ${progress}%"></div></div>
+                    <div class="glass-card">
+                        <h3 class="taker-question-title">${question.text} ${question.required ? '<span class="text-red-500">*</span>' : ''}</h3>
+                        ${question.helper ? `<p class="text-secondary mb-4">${question.helper}</p>` : ''}
+                        <div class="taker-options">${inputHtml}</div>
+                        <div class="taker-nav">
+                            <button class="btn btn-secondary" data-action="taker-prev" ${questionIndex === 0 ? 'disabled' : ''}>Previous</button>
+                            <button class="btn btn-primary" data-action="taker-next">
+                                ${questionIndex === survey.questions.length - 1 ? 'Finish Survey' : 'Next'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            this.renderPage(pageHtml);
+        },
+
+        async renderResponses(surveyId) {
+            surveyId = parseInt(surveyId);
+            const survey = await DB.getSurvey(surveyId);
+            const responses = await DB.getResponsesForSurvey(surveyId);
+
+            const responseListHtml = responses.length > 0 ? responses.map(r => `
+                <a href="#/response/${r.id}" class="block glass-card">
+                    <p class="font-bold">Response ID: ${r.id}</p>
+                    <p class="text-secondary text-sm">Collected on: ${new Date(r.timestamp).toLocaleString()}</p>
+                </a>
+            `).join('') : `
+                <div class="empty-state glass-card">
+                    <h2 class="empty-state-title">No Responses Yet</h2>
+                    <p class="empty-state-text">Collect data using the survey to see responses here.</p>
+                    <a href="#/collect/${surveyId}" class="btn btn-primary">${ICONS.collect} Start Collecting</a>
+                </div>`;
+
+            const pageHtml = `
+                <div class="page" id="page-responses">
+                    <header class="page-header">
+                        <a href="#/" class="btn btn-secondary mb-4">&larr; Back to Dashboard</a>
+                        <h2 class="page-title">Responses for: ${survey.metadata.title}</h2>
+                        <p class="page-subtitle">${responses.length} response(s) collected.</p>
+                        ${responses.length > 0 ? `
+                            <div class="mt-6 flex gap-4">
+                                <button class="btn btn-primary" data-action="export-csv" data-survey-id="${surveyId}">Export as CSV</button>
+                                <button class="btn btn-secondary" data-action="export-json" data-survey-id="${surveyId}">Export as JSON</button>
+                            </div>
+                        ` : ''}
+                    </header>
+                    <div class="space-y-4">${responseListHtml}</div>
+                </div>
+            `;
+            this.renderPage(pageHtml);
+        },
+
+        async renderResponseDetail(responseId) {
+            responseId = parseInt(responseId);
+            const response = await DB.getResponse(responseId);
+            const survey = await DB.getSurvey(response.surveyId);
+
+            const answersHtml = survey.questions.map(q => {
+                let answer = response.answers[q.id];
+                if (Array.isArray(answer)) answer = answer.join(', ');
+                if (!answer && answer !== 0) answer = '<em>Not Answered</em>';
+                
+                return `
+                    <div class="py-4 border-b border-glass-border">
+                        <p class="text-secondary">${q.text}</p>
+                        <p class="text-lg font-semibold">${answer}</p>
+                    </div>
+                `
+            }).join('');
+            
+            const pageHtml = `
+                <div class="page" id="page-response-detail">
+                     <header class="page-header">
+                        <a href="#/responses/${response.surveyId}" class="btn btn-secondary mb-4">&larr; Back to Responses</a>
+                        <h2 class="page-title">Response Detail (ID: ${response.id})</h2>
+                        <p class="page-subtitle">For survey: ${survey.metadata.title}</p>
+                        <p class="text-secondary mt-2">Collected on: ${new Date(response.timestamp).toLocaleString()}</p>
+                    </header>
+                    <div class="glass-card">
+                        ${answersHtml}
+                    </div>
+                </div>
+            `;
+            this.renderPage(pageHtml);
+        }
+    };
+    
+    // --- ROUTER MODULE ---
+    // A simple hash-based router to navigate between pages.
+    const Router = {
+        routes: {
+            '/': UI.renderDashboard.bind(UI),
+            '/builder/:id': (id) => UI.renderBuilder(id),
+            '/collect/:id': (id) => UI.renderTaker(id),
+            '/responses/:id': (id) => UI.renderResponses(id),
+            '/response/:id': (id) => UI.renderResponseDetail(id),
+        },
+        
+        // Handles routing based on the current URL hash.
+        handle() {
+            const path = window.location.hash.slice(1) || '/';
+            const parts = path.split('/');
+            
+            let route = `/${parts[1]}`;
+            if (parts[2]) route += '/:id';
+
+            if (this.routes[route]) {
+                this.routes[route](parts[2]);
+            } else if (this.routes[path]) {
+                this.routes[path]();
+            } else {
+                this.routes['/'](); // Fallback to dashboard
+            }
+        },
+
+        // Initializes the router.
+        init() {
+            window.addEventListener('hashchange', this.handle.bind(this));
+            this.handle();
         }
     };
 
+    // --- HELPER FUNCTIONS ---
+    // Utility functions used across the application.
+    const Helpers = {
+        // Creates a downloadable file from text content.
+        downloadFile(filename, content, type) {
+            const blob = new Blob([content], { type });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        },
+        
+        // Converts survey responses to CSV format.
+        async exportToCsv(surveyId) {
+            const survey = await DB.getSurvey(surveyId);
+            const responses = await DB.getResponsesForSurvey(surveyId);
+            const headers = ['ResponseID', 'Timestamp', ...survey.questions.map(q => q.text)];
+            const rows = responses.map(r => {
+                const row = [r.id, new Date(r.timestamp).toISOString()];
+                survey.questions.forEach(q => {
+                    const answer = r.answers[q.id];
+                    const value = Array.isArray(answer) ? answer.join('; ') : answer;
+                    row.push(`"${String(value || '').replace(/"/g, '""')}"`);
+                });
+                return row.join(',');
+            });
+            const csvContent = [headers.join(','), ...rows].join('\n');
+            this.downloadFile(`${survey.metadata.title}_responses.csv`, csvContent, 'text/csv');
+        },
 
-    // --- APP INITIALIZATION ---
-    async function init() {
-        UI.showPage('loading');
-        await DB.init();
-        await Auth.checkSession();
-        Router.init();
-        setupEventListeners();
-        Router.handle();
-    }
+        // Converts survey responses to JSON format.
+        async exportToJson(surveyId) {
+            const survey = await DB.getSurvey(surveyId);
+            const responses = await DB.getResponsesForSurvey(surveyId);
+            const exportData = { survey, responses };
+            this.downloadFile(`${survey.metadata.title}_responses.json`, JSON.stringify(exportData, null, 2), 'application/json');
+        }
+    };
+    
+    // --- EVENT HANDLERS & APP LOGIC ---
+    // This object contains the core logic that responds to user interactions.
+    const App = {
+        // --- Dashboard Logic ---
+        async handleCreateSurvey() {
+            const newSurvey = {
+                metadata: { title: 'Untitled Survey', university: '', researcher: '', consent: '' },
+                questions: [],
+                lastUpdated: Date.now()
+            };
+            const id = await DB.saveSurvey(newSurvey);
+            window.location.hash = `#/builder/${id}`;
+        },
 
-    init();
+        // --- Builder Logic ---
+        async saveSurvey(surveyId) {
+            const isNew = surveyId === 'new';
+            const surveyData = isNew ? {} : await DB.getSurvey(parseInt(surveyId));
+
+            // Gather metadata
+            surveyData.metadata = {
+                title: document.getElementById('meta-title').value,
+                university: document.getElementById('meta-university').value,
+                researcher: document.getElementById('meta-researcher').value,
+                consent: document.getElementById('meta-consent').value,
+            };
+            
+            // Gather questions from the DOM
+            const questionElements = [...document.querySelectorAll('.question-card')];
+            const questions = questionElements.map(card => {
+                const id = card.dataset.questionId;
+                const existingQuestion = (surveyData.questions || []).find(q => q.id == id) || {};
+                
+                const updatedQuestion = { ...existingQuestion, id };
+                card.querySelectorAll('[data-action="update-question-prop"]').forEach(input => {
+                    const prop = input.dataset.prop;
+                    updatedQuestion[prop] = input.type === 'checkbox' ? input.checked : input.value;
+                });
+
+                const optionsContainer = card.querySelector(`[data-question-id="${id}"]`);
+                if (optionsContainer) {
+                    updatedQuestion.options = [...optionsContainer.querySelectorAll('[data-action="update-option"]')]
+                        .map(optEl => optEl.value);
+                }
+                return updatedQuestion;
+            });
+
+            surveyData.questions = questions;
+            surveyData.lastUpdated = Date.now();
+
+            const savedId = await DB.saveSurvey(surveyData);
+            if (isNew) {
+                // Update URL and survey ID on the page after first save
+                window.history.replaceState(null, '', `#/builder/${savedId}`);
+                document.getElementById('page-builder').dataset.surveyId = savedId;
+            }
+        },
+
+        handleAddQuestion(type, surveyId) {
+            const newQuestion = {
+                id: `q_${Date.now()}`, type, text: '', helper: '', required: true,
+                options: ['radio', 'checkbox', 'dropdown'].includes(type) ? ['Option 1'] :
+                         type === 'likert' ? ['Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'] : []
+            };
+            const cardHtml = UI.getQuestionCardHtml(newQuestion);
+            const list = document.getElementById('question-list');
+            
+            if (list.querySelector('.empty-state')) list.innerHTML = '';
+            list.insertAdjacentHTML('beforeend', cardHtml);
+
+            this.saveSurvey(surveyId);
+        },
+
+        handleQuestionUpdate(e, surveyId) {
+            const action = e.target.dataset.action;
+            const questionCard = e.target.closest('.question-card');
+            if (!questionCard) return;
+            const questionId = questionCard.dataset.questionId;
+
+            switch(action) {
+                case 'delete-question':
+                    if (confirm('Are you sure you want to delete this question?')) {
+                        questionCard.remove();
+                        this.saveSurvey(surveyId);
+                    }
+                    break;
+                case 'add-option':
+                    const optionsContainer = questionCard.querySelector(`[data-question-id="${questionId}"]`);
+                    const newIndex = optionsContainer.children.length;
+                    const optionHtml = `
+                        <div class="flex items-center gap-2">
+                            <input type="text" class="form-input" data-action="update-option" data-index="${newIndex}" value="Option ${newIndex + 1}">
+                            <button class="btn btn-danger" data-action="delete-option" data-index="${newIndex}">${ICONS.trash}</button>
+                        </div>`;
+                    optionsContainer.insertAdjacentHTML('beforeend', optionHtml);
+                    this.saveSurvey(surveyId);
+                    break;
+                case 'delete-option':
+                    e.target.closest('.flex').remove();
+                    this.saveSurvey(surveyId);
+                    break;
+            }
+
+            // Autosave on any input/change
+            if (['update-question-prop', 'update-option'].includes(action)) {
+                this.saveSurvey(surveyId);
+            }
+        },
+
+        handleDragAndDrop(e) {
+            const list = document.getElementById('question-list');
+            if (!list) return;
+
+            if (e.type === 'dragstart' && e.target.classList.contains('question-card')) {
+                state.draggedElement = e.target;
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => e.target.classList.add('is-dragging'), 0);
+            }
+            if (e.type === 'dragend' && state.draggedElement) {
+                state.draggedElement.classList.remove('is-dragging');
+                state.draggedElement = null;
+                const indicator = list.querySelector('.drop-indicator');
+                if (indicator) indicator.remove();
+            }
+            if (e.type === 'dragover') {
+                e.preventDefault();
+                const targetCard = e.target.closest('.question-card');
+                if (targetCard && targetCard !== state.draggedElement) {
+                    const rect = targetCard.getBoundingClientRect();
+                    const isAfter = e.clientY > rect.top + rect.height / 2;
+                    let indicator = list.querySelector('.drop-indicator');
+                    if (!indicator) {
+                        indicator = document.createElement('div');
+                        indicator.className = 'drop-indicator';
+                    }
+                    if (isAfter) {
+                        targetCard.after(indicator);
+                    } else {
+                        targetCard.before(indicator);
+                    }
+                }
+            }
+            if (e.type === 'drop') {
+                e.preventDefault();
+                const indicator = list.querySelector('.drop-indicator');
+                if (indicator && state.draggedElement) {
+                    indicator.before(state.draggedElement);
+                    indicator.remove();
+                    const surveyId = document.getElementById('page-builder').dataset.surveyId;
+                    this.saveSurvey(surveyId);
+                }
+            }
+        },
+
+        // --- Taker Logic ---
+        async handleStartSurvey(surveyId) {
+            const survey = await DB.getSurvey(parseInt(surveyId));
+            sessionStorage.setItem('currentSurveyAnswers', JSON.stringify({}));
+            UI.renderTakerQuestion(survey, 0, {});
+        },
+
+        handleTakerNav(e, surveyId, currentIdx) {
+            const isNext = e.target.dataset.action === 'taker-next';
+            const form = e.target.closest('.glass-card');
+            
+            // 1. Get current answers from session storage
+            let answers = JSON.parse(sessionStorage.getItem('currentSurveyAnswers'));
+            
+            // 2. Collect answer from current question
+            const currentQuestion = App.collectAnswer(form);
+            if (isNext && currentQuestion.required && !currentQuestion.value) {
+                alert('This question is required.');
+                return;
+            }
+            answers[currentQuestion.id] = currentQuestion.value;
+            
+            // 3. Save updated answers to session storage
+            sessionStorage.setItem('currentSurveyAnswers', JSON.stringify(answers));
+            
+            // 4. Navigate
+            DB.getSurvey(surveyId).then(survey => {
+                if (isNext) {
+                    if (currentIdx < survey.questions.length - 1) {
+                        UI.renderTakerQuestion(survey, currentIdx + 1, answers);
+                    } else {
+                        // Finish survey
+                        this.handleSubmitResponse(survey.id, answers);
+                    }
+                } else { // Previous
+                    if (currentIdx > 0) {
+                        UI.renderTakerQuestion(survey, currentIdx - 1, answers);
+                    }
+                }
+            });
+        },
+        
+        collectAnswer(form) {
+            const questionId = form.querySelector('[name]').name;
+            const questionEl = document.querySelector(`[name="${questionId}"]`);
+            const questionType = questionEl.closest('.taker-options').querySelector('[name]')?.type;
+
+            let value;
+            if (questionType === 'checkbox') {
+                value = [...form.querySelectorAll(`[name="${questionId}"]:checked`)].map(el => el.value);
+            } else if (questionEl.classList.contains('rating-stars')) {
+                value = form.querySelector(`input[name="${questionId}"]`).value;
+            } else {
+                value = form.querySelector(`[name="${questionId}"]:checked`)?.value || form.querySelector(`[name="${questionId}"]`).value;
+            }
+
+            const survey = JSON.parse(sessionStorage.getItem('currentSurvey'));
+            const isRequired = document.querySelector('.taker-question-title span.text-red-500') !== null;
+            
+            return { id: questionId, value: value || null, required: isRequired };
+        },
+
+        async handleSubmitResponse(surveyId, answers) {
+            const response = {
+                surveyId,
+                timestamp: Date.now(),
+                answers
+            };
+            await DB.addResponse(response);
+            sessionStorage.removeItem('currentSurveyAnswers');
+            alert('Response submitted successfully!');
+            window.location.hash = `#/responses/${surveyId}`;
+        },
+
+        // Setup all event listeners for the application.
+        setupEventListeners() {
+            document.body.addEventListener('click', e => {
+                const action = e.target.dataset.action;
+                if (!action) return;
+
+                // Dashboard actions
+                if (action === 'create-survey') this.handleCreateSurvey();
+
+                // Builder actions
+                const builderPage = e.target.closest('#page-builder');
+                if (builderPage) {
+                    const surveyId = builderPage.dataset.surveyId;
+                    if (action === 'add-question') this.handleAddQuestion(e.target.dataset.type, surveyId);
+                    if (e.target.closest('.question-card')) this.handleQuestionUpdate(e, surveyId);
+                }
+                
+                // Taker actions
+                if (action === 'start-survey') this.handleStartSurvey(e.target.dataset.surveyId);
+                const takerPage = e.target.closest('#taker-question');
+                if (takerPage && (action === 'taker-next' || action === 'taker-prev')) {
+                    this.handleTakerNav(e, parseInt(takerPage.dataset.surveyId), parseInt(takerPage.dataset.questionIndex));
+                }
+                const ratingStars = e.target.closest('.rating-stars');
+                if (ratingStars) {
+                    const value = e.target.dataset.value;
+                    if (value) {
+                        const questionId = ratingStars.dataset.questionId;
+                        ratingStars.querySelector(`input[name="${questionId}"]`).value = value;
+                        [...ratingStars.children].forEach(star => {
+                            star.classList.toggle('selected', star.dataset.value <= value);
+                        });
+                    }
+                }
+                
+                // Export actions
+                if (action === 'export-csv') Helpers.exportToCsv(parseInt(e.target.dataset.surveyId));
+                if (action === 'export-json') Helpers.exportToJson(parseInt(e.target.dataset.surveyId));
+            });
+
+            // Builder autosave
+            document.body.addEventListener('input', e => {
+                const builderPage = e.target.closest('#page-builder');
+                if (builderPage) {
+                    this.saveSurvey(builderPage.dataset.surveyId);
+                }
+            });
+
+            // Builder drag and drop
+            document.body.addEventListener('dragstart', this.handleDragAndDrop);
+            document.body.addEventListener('dragend', this.handleDragAndDrop);
+            document.body.addEventListener('dragover', this.handleDragAndDrop);
+            document.body.addEventListener('drop', this.handleDragAndDrop);
+        },
+
+        // Initializes the application.
+        async init() {
+            await DB.init();
+            this.setupEventListeners();
+            Router.init();
+        }
+    };
+
+    // --- APPLICATION START ---
+    App.init();
+
+})();
 });

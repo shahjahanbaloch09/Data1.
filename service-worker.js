@@ -1,69 +1,63 @@
-const CACHE_NAME = 'field-survey-tool-cache-v1';
+const CACHE_NAME = 'survey-collector-cache-v1';
+// List of all the files that make up the application shell.
 const urlsToCache = [
   '/',
   'index.html',
   'style.css',
   'script.js',
   'manifest.json',
-  // CDN assets
-  'https://cdn.tailwindcss.com',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf-autotable.umd.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
 
+// 'install' event listener.
+// This is called when the service worker is first installed.
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
         console.log('Opened cache');
-        // Using { mode: 'no-cors' } for CDN requests to avoid CORB/CORS issues,
-        // which would otherwise prevent caching.
-        const requests = urlsToCache.map(url => {
-          if (url.startsWith('http')) {
-            return new Request(url, { mode: 'no-cors' });
-          }
-          return url;
-        });
-        return cache.addAll(requests);
+        return cache.addAll(urlsToCache);
       })
   );
 });
 
+// 'fetch' event listener.
+// This is called for every network request.
+// It uses a cache-first strategy.
 self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request)
       .then(response => {
-        // Cache hit - return response
+        // Cache hit - return the cached response.
         if (response) {
           return response;
         }
-        // Not in cache - fetch from network, and cache it
+        // Not in cache - fetch from the network.
         return fetch(event.request).then(
           networkResponse => {
-            // Check if we received a valid response to cache
-            if (!networkResponse || networkResponse.status !== 200) {
-               // Don't cache error responses or opaque responses from no-cors requests for non-cdn resources
-               if (networkResponse.type !== 'opaque') {
-                   return networkResponse;
-               }
+            // Check if we received a valid response to cache.
+            if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic' && !networkResponse.type === 'cors') {
+              return networkResponse;
             }
-            
+
+            // Clone the response because it's a stream and can only be consumed once.
             const responseToCache = networkResponse.clone();
+
             caches.open(CACHE_NAME)
               .then(cache => {
                 cache.put(event.request, responseToCache);
               });
+
             return networkResponse;
           }
-        ).catch(error => {
-            console.error('Fetching failed:', error);
-            // You could return a custom offline page here if you had one cached
-        });
+        );
       })
   );
 });
 
+// 'activate' event listener.
+// This is called when the service worker is activated.
+// It's a good place to clean up old caches.
 self.addEventListener('activate', event => {
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
@@ -71,6 +65,7 @@ self.addEventListener('activate', event => {
       return Promise.all(
         cacheNames.map(cacheName => {
           if (cacheWhitelist.indexOf(cacheName) === -1) {
+            // If the cache name is not in our whitelist, delete it.
             return caches.delete(cacheName);
           }
         })
