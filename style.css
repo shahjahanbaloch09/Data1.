@@ -42,6 +42,7 @@ body {
 .app-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding: 1rem 1.5rem;
     position: sticky;
     top: 0;
@@ -49,6 +50,12 @@ body {
     background: rgba(16, 16, 27, 0.8);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--glass-border);
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
 }
 
 .logo {
@@ -59,7 +66,6 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-right: 1rem;
     flex-shrink: 0;
 }
 
@@ -259,13 +265,9 @@ body {
 /* --- BUILDER SPECIFIC STYLES --- */
 .builder-grid {
     display: grid;
-    grid-template-columns: 300px 1fr;
+    grid-template-columns: 1fr;
     gap: 2rem;
     align-items: start;
-}
-
-@media (max-width: 900px) {
-    .builder-grid { grid-template-columns: 1fr; }
 }
 
 .question-card {
@@ -296,6 +298,46 @@ body {
     border-radius: 2px;
     animation: fadeIn 0.2s;
 }
+
+/* --- AUTH PAGE STYLES --- */
+.auth-container {
+    max-width: 450px;
+    margin: 4rem auto;
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+.auth-toggle {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+    background: var(--glass-bg);
+    border-radius: 0.75rem;
+    padding: 0.25rem;
+    border: 1px solid var(--glass-border);
+}
+
+.auth-toggle-btn {
+    flex: 1;
+    padding: 0.75rem;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 0.6rem;
+    transition: all 0.3s ease;
+}
+
+.auth-toggle-btn.active {
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.auth-form { display: none; }
+.auth-form.active { display: block; }
+.auth-form .form-group:last-of-type { margin-bottom: 0; }
 
 /* --- TAKER SPECIFIC STYLES --- */
 .taker-container {

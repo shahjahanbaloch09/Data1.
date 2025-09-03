@@ -19,12 +19,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const state = {
         db: null, // Holds the IndexedDB database connection.
         draggedElement: null, // Tracks the element being dragged in the builder.
+        currentUser: null, // Tracks the currently logged-in user.
     };
 
     // --- DOM ELEMENT REFERENCES ---
     // Caching frequently accessed DOM elements for better performance.
     const appContainer = document.getElementById('app-container');
     const modalContainer = document.getElementById('modal-container');
+    const headerAuthActions = document.getElementById('header-auth-actions');
 
     // --- SVG ICONS ---
     // Storing SVG icons as functions makes them reusable and keeps the HTML clean.
@@ -43,13 +45,24 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initializes the database connection.
         init() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open('SurveyCollectorDB', 1);
+                // Bumping DB version to 2 to introduce user-scoping for surveys.
+                const request = indexedDB.open('SurveyCollectorDB', 2);
 
                 request.onupgradeneeded = event => {
                     const db = event.target.result;
+                    // Create 'surveys' store if it doesn't exist
                     if (!db.objectStoreNames.contains('surveys')) {
-                        db.createObjectStore('surveys', { keyPath: 'id', autoIncrement: true });
+                        const surveyStore = db.createObjectStore('surveys', { keyPath: 'id', autoIncrement: true });
+                        surveyStore.createIndex('userEmail', 'userEmail', { unique: false });
+                    } else if (event.oldVersion < 2) { // Handle upgrade from v1 to v2
+                         const transaction = event.target.transaction;
+                         const surveyStore = transaction.objectStore('surveys');
+                         if (!surveyStore.indexNames.contains('userEmail')) {
+                             surveyStore.createIndex('userEmail', 'userEmail', { unique: false });
+                         }
                     }
+
+                    // Create 'responses' store if it doesn't exist
                     if (!db.objectStoreNames.contains('responses')) {
                         const responseStore = db.createObjectStore('responses', { keyPath: 'id', autoIncrement: true });
                         responseStore.createIndex('surveyId', 'surveyId', { unique: false });
@@ -72,22 +85,29 @@ document.addEventListener('DOMContentLoaded', () => {
         // Generic method to perform a database transaction.
         _transaction(storeName, mode, callback) {
             return new Promise((resolve, reject) => {
+                if (!state.db) return reject('Database not initialized.');
                 const transaction = state.db.transaction(storeName, mode);
                 const store = transaction.objectStore(storeName);
                 callback(store, resolve, reject);
             });
         },
 
-        // --- Survey Methods ---
-        saveSurvey: (survey) => DB._transaction('surveys', 'readwrite', (store, res) => {
-            const request = store.put(survey);
-            request.onsuccess = () => res(request.result);
-        }),
+        // --- Survey Methods (Now user-scoped) ---
+        saveSurvey: (survey) => {
+            if (state.currentUser) {
+                survey.userEmail = state.currentUser.email; // Automatically add user email
+            }
+            return DB._transaction('surveys', 'readwrite', (store, res) => {
+                const request = store.put(survey);
+                request.onsuccess = () => res(request.result);
+            });
+        },
         getSurvey: (id) => DB._transaction('surveys', 'readonly', (store, res) => {
             store.get(id).onsuccess = e => res(e.target.result);
         }),
-        getAllSurveys: () => DB._transaction('surveys', 'readonly', (store, res) => {
-            store.getAll().onsuccess = e => res(e.target.result);
+        getSurveysForUser: (userEmail) => DB._transaction('surveys', 'readonly', (store, res) => {
+            const index = store.index('userEmail');
+            index.getAll(userEmail).onsuccess = e => res(e.target.result);
         }),
         deleteSurvey: (id) => DB._transaction('surveys', 'readwrite', (store, res) => {
             store.delete(id).onsuccess = () => res();
@@ -123,11 +143,57 @@ document.addEventListener('DOMContentLoaded', () => {
         closeModal() {
             modalContainer.innerHTML = '';
         },
+
+        renderHeaderAuth() {
+            if (state.currentUser) {
+                headerAuthActions.innerHTML = `<button class="btn btn-secondary" data-action="sign-out">Sign Out</button>`;
+            } else {
+                headerAuthActions.innerHTML = '';
+            }
+        },
+
+        renderAuthPage() {
+            this.renderPage(`
+                <div class="auth-container">
+                    <div class="glass-card">
+                        <div class="auth-toggle">
+                            <button class="auth-toggle-btn active" data-form="signin-form">Sign In</button>
+                            <button class="auth-toggle-btn" data-form="signup-form">Sign Up</button>
+                        </div>
+    
+                        <form id="signin-form" class="auth-form active">
+                            <div class="form-group">
+                                <label for="signin-email" class="form-label">Email</label>
+                                <input type="email" id="signin-email" class="form-input" required autocomplete="email">
+                            </div>
+                            <div class="form-group">
+                                <label for="signin-password" class="form-label">Password</label>
+                                <input type="password" id="signin-password" class="form-input" required autocomplete="current-password">
+                            </div>
+                            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Sign In</button>
+                        </form>
+    
+                        <form id="signup-form" class="auth-form">
+                             <div class="form-group">
+                                <label for="signup-email" class="form-label">Email</label>
+                                <input type="email" id="signup-email" class="form-input" required autocomplete="email">
+                            </div>
+                            <div class="form-group">
+                                <label for="signup-password" class="form-label">Password</label>
+                                <input type="password" id="signup-password" class="form-input" required minlength="6" autocomplete="new-password">
+                            </div>
+                            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Create Account</button>
+                        </form>
+                    </div>
+                </div>
+            `);
+        },
         
         // --- Page Renderers ---
 
         async renderDashboard() {
-            const surveys = await DB.getAllSurveys();
+            if (!state.currentUser) return;
+            const surveys = await DB.getSurveysForUser(state.currentUser.email);
             const surveysWithCounts = await Promise.all(surveys.map(async survey => {
                 const responses = await DB.getResponsesForSurvey(survey.id);
                 return { ...survey, responseCount: responses.length };
@@ -184,39 +250,36 @@ document.addEventListener('DOMContentLoaded', () => {
                     </header>
                     
                     <div class="builder-grid">
-                        <!-- Left Panel: Add Questions & Settings -->
-                        <div class="glass-card" style="position: sticky; top: 80px;">
-                            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;">Add Question</h3>
+                        <div class="glass-card" id="survey-metadata-editor">
+                            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;">1. Survey Details</h3>
+                            <div class="form-group">
+                                <label class="form-label" for="meta-title">Project/Study Title</label>
+                                <input type="text" id="meta-title" class="form-input" value="${survey?.metadata.title || ''}" placeholder="e.g., Community Health Assessment">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="meta-university">University/Organization</label>
+                                <input type="text" id="meta-university" class="form-input" value="${survey?.metadata.university || ''}" placeholder="e.g., National Research University">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="meta-researcher">Researcher Name</label>
+                                <input type="text" id="meta-researcher" class="form-input" value="${survey?.metadata.researcher || ''}" placeholder="e.g., Dr. Jane Doe">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="meta-consent">Disclaimer/Consent Text</label>
+                                <textarea id="meta-consent" class="form-textarea" placeholder="Explain the purpose of the survey, data privacy, and ask for consent.">${survey?.metadata.consent || ''}</textarea>
+                            </div>
+                        </div>
+                    
+                        <div class="glass-card">
+                            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;">2. Add a Question</h3>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
                                 ${questionTypes.map(q => `<button class="btn btn-secondary" data-action="add-question" data-type="${q.type}">${q.label}</button>`).join('')}
                             </div>
                         </div>
-
-                        <!-- Right Panel: Survey Form -->
-                        <div>
-                            <div class="glass-card" id="survey-metadata-editor">
-                                <div class="form-group">
-                                    <label class="form-label" for="meta-title">Project/Study Title</label>
-                                    <input type="text" id="meta-title" class="form-input" value="${survey?.metadata.title || ''}" placeholder="e.g., Community Health Assessment">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label" for="meta-university">University/Organization</label>
-                                    <input type="text" id="meta-university" class="form-input" value="${survey?.metadata.university || ''}" placeholder="e.g., National Research University">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label" for="meta-researcher">Researcher Name</label>
-                                    <input type="text" id="meta-researcher" class="form-input" value="${survey?.metadata.researcher || ''}" placeholder="e.g., Dr. Jane Doe">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label" for="meta-consent">Disclaimer/Consent Text</label>
-                                    <textarea id="meta-consent" class="form-textarea" placeholder="Explain the purpose of the survey, data privacy, and ask for consent.">${survey?.metadata.consent || ''}</textarea>
-                                </div>
-                            </div>
-                            
-                            <h3 style="font-size: 1.5rem; font-weight: 600; margin: 2rem 0 1rem;">Questions</h3>
-                            <div id="question-list" class="space-y-4">
-                                <!-- Questions will be rendered here -->
-                            </div>
+                        
+                        <h3 style="font-size: 1.5rem; font-weight: 600; margin: 1rem 0;">3. Arrange Questions</h3>
+                        <div id="question-list">
+                            <!-- Questions will be rendered here -->
                         </div>
                     </div>
                 </div>
@@ -240,25 +303,25 @@ document.addEventListener('DOMContentLoaded', () => {
         getQuestionCardHtml(q) {
             const isChoice = ['radio', 'checkbox', 'dropdown', 'likert'].includes(q.type);
             const optionsHtml = isChoice ? `
-                <div class="mt-4">
-                    <label class="form-label">${q.type === 'likert' ? 'Scale Labels (e.g., Strongly Disagree, Disagree...)' : 'Options'}</label>
-                    <div class="space-y-2" data-question-id="${q.id}">
+                <div style="margin-top: 1rem;">
+                    <label class="form-label">${q.type === 'likert' ? 'Scale Labels (e.g., Strongly Disagree...)' : 'Options'}</label>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;" data-question-id="${q.id}">
                         ${q.options.map((opt, i) => `
-                            <div class="flex items-center gap-2">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
                                 <input type="text" class="form-input" data-action="update-option" data-index="${i}" value="${opt}" placeholder="Option ${i + 1}">
                                 <button class="btn btn-danger" data-action="delete-option" data-index="${i}">${ICONS.trash}</button>
                             </div>
                         `).join('')}
                     </div>
-                    <button class="btn btn-secondary mt-2" data-action="add-option" data-question-id="${q.id}">+ Add Option</button>
+                    <button class="btn btn-secondary" style="margin-top: 0.5rem;" data-action="add-option" data-question-id="${q.id}">+ Add Option</button>
                 </div>
             ` : '';
             
             return `
-                <div class="glass-card question-card" draggable="true" data-question-id="${q.id}">
+                <div class="glass-card question-card" draggable="true" data-question-id="${q.id}" style="margin-bottom: 1rem;">
                     <div class="drag-handle">${ICONS.drag}</div>
-                    <div class="flex justify-between items-start">
-                        <span class="text-sm uppercase text-secondary">${q.type.replace('_', ' ')}</span>
+                    <div style="display:flex; justify-content: space-between; align-items: flex-start;">
+                        <span style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-secondary);">${q.type.replace('_', ' ')}</span>
                         <button class="btn btn-danger" data-action="delete-question" data-question-id="${q.id}">${ICONS.trash}</button>
                     </div>
                     <div class="form-group">
@@ -270,10 +333,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         <input type="text" class="form-input" data-action="update-question-prop" data-prop="helper" value="${q.helper || ''}" placeholder="Additional instructions">
                     </div>
                     ${optionsHtml}
-                    <div class="mt-4 pt-4 border-t border-glass-border flex items-center justify-end">
-                        <label class="flex items-center cursor-pointer">
-                            <span class="mr-3 font-medium">Required</span>
-                            <input type="checkbox" data-action="update-question-prop" data-prop="required" class="h-5 w-5" ${q.required ? 'checked' : ''}>
+                    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--glass-border); display:flex; align-items: center; justify-content: flex-end;">
+                        <label style="display:flex; align-items: center; cursor: pointer;">
+                            <span style="margin-right: 0.75rem; font-weight: 500;">Required</span>
+                            <input type="checkbox" data-action="update-question-prop" data-prop="required" style="height: 1.25rem; width: 1.25rem;" ${q.required ? 'checked' : ''}>
                         </label>
                     </div>
                 </div>
@@ -283,21 +346,21 @@ document.addEventListener('DOMContentLoaded', () => {
         async renderTaker(surveyId) {
             const survey = await DB.getSurvey(parseInt(surveyId));
             if (!survey) {
-                this.renderPage(`<div class="page text-center"><h2 class="page-title">Survey not found.</h2><a href="#/" class="btn btn-primary mt-4">Go Home</a></div>`);
+                this.renderPage(`<div class="page" style="text-align: center;"><h2 class="page-title">Survey not found.</h2><a href="#/" class="btn btn-primary" style="margin-top: 1rem;">Go Home</a></div>`);
                 return;
             }
             
             // Start with the disclaimer screen
             const disclaimerHtml = `
                 <div class="page taker-container" id="taker-disclaimer">
-                    <div class="glass-card text-center">
-                        <h2 class="text-2xl font-bold">${survey.metadata.title}</h2>
-                        <p class="text-secondary mt-2">${survey.metadata.university} by ${survey.metadata.researcher}</p>
-                        <div class="my-6 p-4 bg-black bg-opacity-20 rounded-lg text-left">
-                            <h3 class="font-bold mb-2">Consent & Disclaimer</h3>
-                            <p class="whitespace-pre-wrap">${survey.metadata.consent}</p>
+                    <div class="glass-card" style="text-align: center;">
+                        <h2 style="font-size: 1.5rem; font-weight: 700;">${survey.metadata.title}</h2>
+                        <p style="color: var(--text-secondary); margin-top: 0.5rem;">${survey.metadata.university} by ${survey.metadata.researcher}</p>
+                        <div style="margin: 1.5rem 0; padding: 1rem; background: rgba(0,0,0,0.2); border-radius: 0.5rem; text-align: left;">
+                            <h3 style="font-weight: 700; margin-bottom: 0.5rem;">Consent & Disclaimer</h3>
+                            <p style="white-space: pre-wrap;">${survey.metadata.consent}</p>
                         </div>
-                        <div class="flex gap-4 justify-center">
+                        <div style="display: flex; gap: 1rem; justify-content: center;">
                             <a href="#/" class="btn btn-secondary">Cancel</a>
                             <button class="btn btn-primary" data-action="start-survey" data-survey-id="${survey.id}">I Agree, Start Survey</button>
                         </div>
@@ -336,7 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 case 'likert':
                     inputHtml = `<div class="likert-scale">
                         ${question.options.map((opt, i) => `
-                            <label><input type="radio" name="${question.id}" value="${i+1}" class="sr-only" ${answer == (i+1) ? 'checked' : ''}><span class="likert-label">${opt}</span></label>
+                            <label><input type="radio" name="${question.id}" value="${i+1}" style="position: absolute; opacity: 0;" ${answer == (i+1) ? 'checked' : ''}><span class="likert-label">${opt}</span></label>
                         `).join('')}
                     </div>`;
                     break;
@@ -346,8 +409,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="page taker-container" id="taker-question" data-survey-id="${survey.id}" data-question-index="${questionIndex}">
                     <div class="taker-progress"><div class="taker-progress-bar" style="width: ${progress}%"></div></div>
                     <div class="glass-card">
-                        <h3 class="taker-question-title">${question.text} ${question.required ? '<span class="text-red-500">*</span>' : ''}</h3>
-                        ${question.helper ? `<p class="text-secondary mb-4">${question.helper}</p>` : ''}
+                        <h3 class="taker-question-title">${question.text} ${question.required ? '<span style="color: #f44336;">*</span>' : ''}</h3>
+                        ${question.helper ? `<p style="color: var(--text-secondary); margin-bottom: 1rem;">${question.helper}</p>` : ''}
                         <div class="taker-options">${inputHtml}</div>
                         <div class="taker-nav">
                             <button class="btn btn-secondary" data-action="taker-prev" ${questionIndex === 0 ? 'disabled' : ''}>Previous</button>
@@ -367,9 +430,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const responses = await DB.getResponsesForSurvey(surveyId);
 
             const responseListHtml = responses.length > 0 ? responses.map(r => `
-                <a href="#/response/${r.id}" class="block glass-card">
-                    <p class="font-bold">Response ID: ${r.id}</p>
-                    <p class="text-secondary text-sm">Collected on: ${new Date(r.timestamp).toLocaleString()}</p>
+                <a href="#/response/${r.id}" class="glass-card" style="display: block; text-decoration: none; color: inherit; margin-bottom: 1rem;">
+                    <p style="font-weight: 700;">Response ID: ${r.id}</p>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem;">Collected on: ${new Date(r.timestamp).toLocaleString()}</p>
                 </a>
             `).join('') : `
                 <div class="empty-state glass-card">
@@ -381,17 +444,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const pageHtml = `
                 <div class="page" id="page-responses">
                     <header class="page-header">
-                        <a href="#/" class="btn btn-secondary mb-4">&larr; Back to Dashboard</a>
+                        <a href="#/" class="btn btn-secondary" style="margin-bottom: 1rem;">&larr; Back to Dashboard</a>
                         <h2 class="page-title">Responses for: ${survey.metadata.title}</h2>
                         <p class="page-subtitle">${responses.length} response(s) collected.</p>
                         ${responses.length > 0 ? `
-                            <div class="mt-6 flex gap-4">
+                            <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
                                 <button class="btn btn-primary" data-action="export-csv" data-survey-id="${surveyId}">Export as CSV</button>
                                 <button class="btn btn-secondary" data-action="export-json" data-survey-id="${surveyId}">Export as JSON</button>
                             </div>
                         ` : ''}
                     </header>
-                    <div class="space-y-4">${responseListHtml}</div>
+                    <div>${responseListHtml}</div>
                 </div>
             `;
             this.renderPage(pageHtml);
@@ -408,9 +471,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!answer && answer !== 0) answer = '<em>Not Answered</em>';
                 
                 return `
-                    <div class="py-4 border-b border-glass-border">
-                        <p class="text-secondary">${q.text}</p>
-                        <p class="text-lg font-semibold">${answer}</p>
+                    <div style="padding: 1rem 0; border-bottom: 1px solid var(--glass-border);">
+                        <p style="color: var(--text-secondary);">${q.text}</p>
+                        <p style="font-size: 1.25rem; font-weight: 600;">${answer}</p>
                     </div>
                 `
             }).join('');
@@ -418,10 +481,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const pageHtml = `
                 <div class="page" id="page-response-detail">
                      <header class="page-header">
-                        <a href="#/responses/${response.surveyId}" class="btn btn-secondary mb-4">&larr; Back to Responses</a>
+                        <a href="#/responses/${response.surveyId}" class="btn btn-secondary" style="margin-bottom: 1rem;">&larr; Back to Responses</a>
                         <h2 class="page-title">Response Detail (ID: ${response.id})</h2>
                         <p class="page-subtitle">For survey: ${survey.metadata.title}</p>
-                        <p class="text-secondary mt-2">Collected on: ${new Date(response.timestamp).toLocaleString()}</p>
+                        <p style="color: var(--text-secondary); margin-top: 0.5rem;">Collected on: ${new Date(response.timestamp).toLocaleString()}</p>
                     </header>
                     <div class="glass-card">
                         ${answersHtml}
@@ -435,6 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- ROUTER MODULE ---
     // A simple hash-based router to navigate between pages.
     const Router = {
+        listener: null,
         routes: {
             '/': UI.renderDashboard.bind(UI),
             '/builder/:id': (id) => UI.renderBuilder(id),
@@ -443,8 +507,11 @@ document.addEventListener('DOMContentLoaded', () => {
             '/response/:id': (id) => UI.renderResponseDetail(id),
         },
         
-        // Handles routing based on the current URL hash.
         handle() {
+            if (!state.currentUser) {
+                UI.renderAuthPage();
+                return;
+            }
             const path = window.location.hash.slice(1) || '/';
             const parts = path.split('/');
             
@@ -460,17 +527,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         },
 
-        // Initializes the router.
         init() {
-            window.addEventListener('hashchange', this.handle.bind(this));
+            if (this.listener) window.removeEventListener('hashchange', this.listener);
+            this.listener = this.handle.bind(this);
+            window.addEventListener('hashchange', this.listener);
             this.handle();
         }
     };
 
     // --- HELPER FUNCTIONS ---
-    // Utility functions used across the application.
     const Helpers = {
-        // Creates a downloadable file from text content.
         downloadFile(filename, content, type) {
             const blob = new Blob([content], { type });
             const link = document.createElement('a');
@@ -480,8 +546,6 @@ document.addEventListener('DOMContentLoaded', () => {
             link.click();
             document.body.removeChild(link);
         },
-        
-        // Converts survey responses to CSV format.
         async exportToCsv(surveyId) {
             const survey = await DB.getSurvey(surveyId);
             const responses = await DB.getResponsesForSurvey(surveyId);
@@ -498,8 +562,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const csvContent = [headers.join(','), ...rows].join('\n');
             this.downloadFile(`${survey.metadata.title}_responses.csv`, csvContent, 'text/csv');
         },
-
-        // Converts survey responses to JSON format.
         async exportToJson(surveyId) {
             const survey = await DB.getSurvey(surveyId);
             const responses = await DB.getResponsesForSurvey(surveyId);
@@ -509,8 +571,60 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     
     // --- EVENT HANDLERS & APP LOGIC ---
-    // This object contains the core logic that responds to user interactions.
     const App = {
+        // --- User Management (INSECURE - for local prototype only) ---
+        _getUsers: () => JSON.parse(localStorage.getItem('survey_users')) || [],
+        _saveUsers: (users) => localStorage.setItem('survey_users', JSON.stringify(users)),
+
+        handleSignUp(email, password) {
+            // WARNING: Storing plain-text passwords is very insecure. This is for local-only prototype.
+            const users = this._getUsers();
+            if (users.find(u => u.email === email)) {
+                alert('An account with this email already exists.');
+                return;
+            }
+            users.push({ email, password });
+            this._saveUsers(users);
+            alert('Account created! Please sign in.');
+            // Toggle to sign-in form
+            document.querySelector('.auth-toggle-btn.active').classList.remove('active');
+            document.querySelector('[data-form="signin-form"]').classList.add('active');
+            document.querySelector('.auth-form.active').classList.remove('active');
+            document.getElementById('signin-form').classList.add('active');
+            document.getElementById('signin-email').value = email;
+            document.getElementById('signin-password').focus();
+        },
+
+        handleSignIn(email, password) {
+            const users = this._getUsers();
+            const user = users.find(u => u.email === email && u.password === password);
+            if (user) {
+                state.currentUser = { email: user.email };
+                sessionStorage.setItem('survey_currentUser', JSON.stringify(state.currentUser));
+                this.bootAuthenticatedApp();
+            } else {
+                alert('Invalid email or password.');
+            }
+        },
+
+        handleSignOut() {
+            state.currentUser = null;
+            sessionStorage.removeItem('survey_currentUser');
+            window.location.hash = '';
+            this.bootUnauthenticatedApp();
+        },
+
+        bootAuthenticatedApp() {
+            UI.renderHeaderAuth();
+            Router.init();
+        },
+
+        bootUnauthenticatedApp() {
+            UI.renderHeaderAuth();
+            appContainer.innerHTML = ''; // Clear main app view
+            UI.renderAuthPage();
+        },
+
         // --- Dashboard Logic ---
         async handleCreateSurvey() {
             const newSurvey = {
@@ -525,9 +639,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // --- Builder Logic ---
         async saveSurvey(surveyId) {
             const isNew = surveyId === 'new';
-            const surveyData = isNew ? {} : await DB.getSurvey(parseInt(surveyId));
+            let surveyData = { questions: [] };
+            if (!isNew) {
+                surveyData = await DB.getSurvey(parseInt(surveyId)) || { questions: [] };
+            }
 
-            // Gather metadata
             surveyData.metadata = {
                 title: document.getElementById('meta-title').value,
                 university: document.getElementById('meta-university').value,
@@ -535,7 +651,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 consent: document.getElementById('meta-consent').value,
             };
             
-            // Gather questions from the DOM
             const questionElements = [...document.querySelectorAll('.question-card')];
             const questions = questionElements.map(card => {
                 const id = card.dataset.questionId;
@@ -560,7 +675,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const savedId = await DB.saveSurvey(surveyData);
             if (isNew) {
-                // Update URL and survey ID on the page after first save
                 window.history.replaceState(null, '', `#/builder/${savedId}`);
                 document.getElementById('page-builder').dataset.surveyId = savedId;
             }
@@ -598,7 +712,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const optionsContainer = questionCard.querySelector(`[data-question-id="${questionId}"]`);
                     const newIndex = optionsContainer.children.length;
                     const optionHtml = `
-                        <div class="flex items-center gap-2">
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
                             <input type="text" class="form-input" data-action="update-option" data-index="${newIndex}" value="Option ${newIndex + 1}">
                             <button class="btn btn-danger" data-action="delete-option" data-index="${newIndex}">${ICONS.trash}</button>
                         </div>`;
@@ -606,14 +720,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     this.saveSurvey(surveyId);
                     break;
                 case 'delete-option':
-                    e.target.closest('.flex').remove();
+                    e.target.closest('div').remove();
                     this.saveSurvey(surveyId);
                     break;
-            }
-
-            // Autosave on any input/change
-            if (['update-question-prop', 'update-option'].includes(action)) {
-                this.saveSurvey(surveyId);
             }
         },
 
@@ -673,30 +782,27 @@ document.addEventListener('DOMContentLoaded', () => {
             const isNext = e.target.dataset.action === 'taker-next';
             const form = e.target.closest('.glass-card');
             
-            // 1. Get current answers from session storage
             let answers = JSON.parse(sessionStorage.getItem('currentSurveyAnswers'));
             
-            // 2. Collect answer from current question
             const currentQuestion = App.collectAnswer(form);
-            if (isNext && currentQuestion.required && !currentQuestion.value) {
+            const questionDef = (async () => (await DB.getSurvey(surveyId)).questions[currentIdx])();
+            
+            if (isNext && questionDef.required && (!currentQuestion.value || currentQuestion.value.length === 0)) {
                 alert('This question is required.');
                 return;
             }
             answers[currentQuestion.id] = currentQuestion.value;
             
-            // 3. Save updated answers to session storage
             sessionStorage.setItem('currentSurveyAnswers', JSON.stringify(answers));
             
-            // 4. Navigate
             DB.getSurvey(surveyId).then(survey => {
                 if (isNext) {
                     if (currentIdx < survey.questions.length - 1) {
                         UI.renderTakerQuestion(survey, currentIdx + 1, answers);
                     } else {
-                        // Finish survey
                         this.handleSubmitResponse(survey.id, answers);
                     }
-                } else { // Previous
+                } else { 
                     if (currentIdx > 0) {
                         UI.renderTakerQuestion(survey, currentIdx - 1, answers);
                     }
@@ -705,97 +811,103 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         
         collectAnswer(form) {
-            const questionId = form.querySelector('[name]').name;
-            const questionEl = document.querySelector(`[name="${questionId}"]`);
-            const questionType = questionEl.closest('.taker-options').querySelector('[name]')?.type;
-
+            const firstInput = form.querySelector('[name]');
+            const questionId = firstInput.name;
             let value;
-            if (questionType === 'checkbox') {
+            if (firstInput.type === 'checkbox') {
                 value = [...form.querySelectorAll(`[name="${questionId}"]:checked`)].map(el => el.value);
-            } else if (questionEl.classList.contains('rating-stars')) {
+            } else if (form.querySelector('.rating-stars')) {
                 value = form.querySelector(`input[name="${questionId}"]`).value;
             } else {
-                value = form.querySelector(`[name="${questionId}"]:checked`)?.value || form.querySelector(`[name="${questionId}"]`).value;
+                const checkedRadio = form.querySelector(`[name="${questionId}"]:checked`);
+                value = checkedRadio ? checkedRadio.value : firstInput.value;
             }
-
-            const survey = JSON.parse(sessionStorage.getItem('currentSurvey'));
-            const isRequired = document.querySelector('.taker-question-title span.text-red-500') !== null;
-            
-            return { id: questionId, value: value || null, required: isRequired };
+            return { id: questionId, value: value || null };
         },
 
         async handleSubmitResponse(surveyId, answers) {
-            const response = {
-                surveyId,
-                timestamp: Date.now(),
-                answers
-            };
+            const response = { surveyId, timestamp: Date.now(), answers };
             await DB.addResponse(response);
             sessionStorage.removeItem('currentSurveyAnswers');
             alert('Response submitted successfully!');
             window.location.hash = `#/responses/${surveyId}`;
         },
 
-        // Setup all event listeners for the application.
         setupEventListeners() {
             document.body.addEventListener('click', e => {
-                const action = e.target.dataset.action;
-                if (!action) return;
-
-                // Dashboard actions
+                const target = e.target.closest('[data-action]');
+                if (!target) return;
+                const action = target.dataset.action;
+                
+                if (action === 'sign-out') this.handleSignOut();
                 if (action === 'create-survey') this.handleCreateSurvey();
 
-                // Builder actions
+                if (e.target.closest('.auth-toggle')) {
+                    document.querySelector('.auth-toggle-btn.active').classList.remove('active');
+                    target.classList.add('active');
+                    document.querySelector('.auth-form.active').classList.remove('active');
+                    document.getElementById(target.dataset.form).classList.add('active');
+                }
+                
                 const builderPage = e.target.closest('#page-builder');
                 if (builderPage) {
                     const surveyId = builderPage.dataset.surveyId;
-                    if (action === 'add-question') this.handleAddQuestion(e.target.dataset.type, surveyId);
+                    if (action === 'add-question') this.handleAddQuestion(target.dataset.type, surveyId);
                     if (e.target.closest('.question-card')) this.handleQuestionUpdate(e, surveyId);
                 }
                 
-                // Taker actions
-                if (action === 'start-survey') this.handleStartSurvey(e.target.dataset.surveyId);
+                if (action === 'start-survey') this.handleStartSurvey(target.dataset.surveyId);
                 const takerPage = e.target.closest('#taker-question');
                 if (takerPage && (action === 'taker-next' || action === 'taker-prev')) {
                     this.handleTakerNav(e, parseInt(takerPage.dataset.surveyId), parseInt(takerPage.dataset.questionIndex));
                 }
-                const ratingStars = e.target.closest('.rating-stars');
-                if (ratingStars) {
-                    const value = e.target.dataset.value;
-                    if (value) {
-                        const questionId = ratingStars.dataset.questionId;
-                        ratingStars.querySelector(`input[name="${questionId}"]`).value = value;
-                        [...ratingStars.children].forEach(star => {
-                            star.classList.toggle('selected', star.dataset.value <= value);
-                        });
-                    }
+                const star = e.target.closest('.star');
+                if (star) {
+                    const ratingStars = star.parentElement;
+                    const value = star.dataset.value;
+                    const questionId = ratingStars.dataset.questionId;
+                    ratingStars.nextElementSibling.value = value;
+                    [...ratingStars.children].forEach(s => s.classList.toggle('selected', s.dataset.value <= value));
                 }
                 
-                // Export actions
-                if (action === 'export-csv') Helpers.exportToCsv(parseInt(e.target.dataset.surveyId));
-                if (action === 'export-json') Helpers.exportToJson(parseInt(e.target.dataset.surveyId));
+                if (action === 'export-csv') Helpers.exportToCsv(parseInt(target.dataset.surveyId));
+                if (action === 'export-json') Helpers.exportToJson(parseInt(target.dataset.surveyId));
             });
 
-            // Builder autosave
+            document.body.addEventListener('submit', e => {
+                e.preventDefault();
+                if (e.target.id === 'signup-form') {
+                    this.handleSignUp(e.target.querySelector('#signup-email').value, e.target.querySelector('#signup-password').value);
+                }
+                if (e.target.id === 'signin-form') {
+                    this.handleSignIn(e.target.querySelector('#signin-email').value, e.target.querySelector('#signin-password').value);
+                }
+            });
+
             document.body.addEventListener('input', e => {
                 const builderPage = e.target.closest('#page-builder');
-                if (builderPage) {
+                if (builderPage && e.target.closest('#survey-metadata-editor, .question-card')) {
                     this.saveSurvey(builderPage.dataset.surveyId);
                 }
             });
 
-            // Builder drag and drop
             document.body.addEventListener('dragstart', this.handleDragAndDrop);
             document.body.addEventListener('dragend', this.handleDragAndDrop);
             document.body.addEventListener('dragover', this.handleDragAndDrop);
             document.body.addEventListener('drop', this.handleDragAndDrop);
         },
 
-        // Initializes the application.
         async init() {
             await DB.init();
             this.setupEventListeners();
-            Router.init();
+
+            const sessionUser = sessionStorage.getItem('survey_currentUser');
+            if (sessionUser) {
+                state.currentUser = JSON.parse(sessionUser);
+                this.bootAuthenticatedApp();
+            } else {
+                this.bootUnauthenticatedApp();
+            }
         }
     };
 
