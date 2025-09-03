@@ -11,6 +11,22 @@ body {
     display: block;
 }
 
+/* New Logo Animation */
+@keyframes rotate {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.logo-animate {
+    border-radius: 50%;
+    border: 3px solid #facc15; /* Tailwind yellow-400 */
+    animation: rotate 10s linear infinite;
+}
+
 /* Modal styles */
 .modal-overlay {
     position: fixed;
@@ -53,6 +69,28 @@ body {
     justify-content: center;
     padding: 1rem;
 }
+
+/* Dashboard Accordion Styles */
+.survey-card-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+    padding: 0 1rem;
+}
+
+.survey-card.expanded .survey-card-body {
+    max-height: 500px; /* Adjust as needed */
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.survey-card .chevron {
+    transition: transform 0.3s ease;
+}
+.survey-card.expanded .chevron {
+    transform: rotate(180deg);
+}
+
 
 /* Survey Builder specific styles */
 .question-card {

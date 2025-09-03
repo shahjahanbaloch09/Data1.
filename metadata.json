@@ -1,5 +1,5 @@
 {
-  "name": "PWA Survey Builder",
-  "description": "A progressive web app for academic and field researchers to design, deploy, and manage surveys with multi-user support and offline-first data collection.",
+  "name": "Data Collector by SHAH!",
+  "description": "A progressive web app for face-to-face data collection and survey management, supporting offline-first workflows.",
   "requestFramePermissions": []
 }

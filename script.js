@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dashboard: document.getElementById('page-dashboard'),
         builder: document.getElementById('page-builder'),
         taker: document.getElementById('page-taker'),
+        responseDetail: document.getElementById('page-response-detail'),
         // Legacy pages
         legacySurvey: document.getElementById('page-legacy-survey'),
         legacyResponses: document.getElementById('page-legacy-responses'),
@@ -170,6 +171,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 request.onerror = e => reject(e.target.error);
             });
         },
+        getResponse(id) {
+             return new Promise((resolve, reject) => {
+                const transaction = state.db.transaction(['responses'], 'readonly');
+                const store = transaction.objectStore('responses');
+                const request = store.get(parseInt(id));
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = e => reject(e.target.error);
+            });
+        },
     };
 
     // --- AUTH MODULE ---
@@ -284,8 +294,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const path = window.location.hash.slice(1) || '/';
             let matched = false;
             
-            if (!state.currentUser && !path.startsWith('/take/')) {
-                 // If not logged in and not taking a survey, force auth page
+            if (!state.currentUser) {
+                 // If not logged in, force auth page (legacy access is handled there)
                 this.routes['/auth'].handler();
                 return;
             }
@@ -313,17 +323,17 @@ document.addEventListener('DOMContentLoaded', () => {
         init() {
             // Public routes
             this.add('/auth', renderAuthPage);
-            this.add('/take/:id', renderTakerPage);
-
+            
             // Private routes
             this.add('/dashboard', renderDashboardPage);
             this.add('/builder/:id', renderBuilderPage);
-            
+            this.add('/collect/:id', renderTakerPage);
+            this.add('/response/:id', renderResponseDetailPage);
+
             // Legacy routes
             this.add('/legacy/survey', Legacy.renderSurveyPage);
             this.add('/legacy/responses', Legacy.renderResponsesPage);
             this.add('/legacy/responses/:id', Legacy.renderResponseDetailPage);
-
 
             this.add('/', () => {
                 if (state.currentUser) {
@@ -407,19 +417,49 @@ document.addEventListener('DOMContentLoaded', () => {
     async function renderDashboardPage() {
         UI.showPage('dashboard');
         const surveys = await DB.getSurveysForUser(state.currentUser.email);
-        const surveyCards = surveys.length > 0 ? surveys.map(s => `
-            <div class="bg-white p-6 rounded-xl shadow-lg">
-                <h3 class="font-bold text-xl text-gray-800">${s.metadata.title}</h3>
-                <p class="text-sm text-gray-500">${s.metadata.university}</p>
-                <div class="mt-4 pt-4 border-t flex justify-end space-x-2">
+
+        const surveysWithResponses = await Promise.all(surveys.map(async s => {
+            const responses = await DB.getResponsesForSurvey(s.id);
+            return { ...s, responses };
+        }));
+
+        const surveyCards = surveysWithResponses.length > 0 ? surveysWithResponses.map(s => `
+            <div class="bg-white rounded-xl shadow-lg survey-card">
+                <div class="p-6">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 class="font-bold text-xl text-gray-800">${s.metadata.title}</h3>
+                            <p class="text-sm text-gray-500">${s.metadata.university}</p>
+                        </div>
+                        <button data-action="toggle-responses" class="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                        </button>
+                    </div>
+                    <p class="mt-4 text-sm font-semibold text-blue-600">${s.responses.length} ${s.responses.length === 1 ? 'Response' : 'Responses'}</p>
+                </div>
+                <div class="border-t px-6 py-4 flex flex-wrap gap-2 justify-end">
                     <button data-action="delete" data-id="${s.id}" class="p-2 text-red-500 hover:bg-red-100 rounded-full transition-colors" title="Delete Survey">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
-                    <button data-action="share" data-id="${s.id}" class="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="Share Survey">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12s-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.368a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" /></svg>
-                    </button>
                     <button data-action="export" data-id="${s.id}" class="px-4 py-2 bg-green-100 text-green-800 font-semibold rounded-lg text-sm hover:bg-green-200 transition-colors">Export</button>
                     <button data-action="edit" data-id="${s.id}" class="px-4 py-2 bg-blue-100 text-blue-800 font-semibold rounded-lg text-sm hover:bg-blue-200 transition-colors">Edit</button>
+                    <button data-action="start-response" data-id="${s.id}" class="px-4 py-2 bg-purple-100 text-purple-800 font-semibold rounded-lg text-sm hover:bg-purple-200 transition-colors">Start New Response</button>
+                </div>
+                <div class="survey-card-body bg-slate-50 border-t rounded-b-xl">
+                     ${s.responses.length > 0 ? `
+                        <ul class="p-4 space-y-2">
+                         ${s.responses.sort((a,b) => b.timestamp - a.timestamp).map(r => `
+                            <li class="p-3 bg-white rounded-md shadow-sm">
+                                <a href="#/response/${r.id}" class="block">
+                                    <p class="font-semibold text-gray-700">Response ID: ${r.id}</p>
+                                    <p class="text-xs text-gray-500">Collected: ${new Date(r.timestamp).toLocaleString()}</p>
+                                </a>
+                            </li>
+                         `).join('')}
+                        </ul>
+                     ` : `
+                        <p class="p-8 text-center text-gray-500">No responses collected yet.</p>
+                     `}
                 </div>
             </div>
         `).join('') : `
@@ -463,8 +503,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const questionTypes = [
             { type: 'short_text', label: 'Short Text' },
             { type: 'long_text', label: 'Long Text' },
-            { type: 'radio', label: 'Multiple Choice' },
-            { type: 'checkbox', label: 'Checkboxes' },
+            { type: 'radio', label: 'Single Choice' },
+            { type: 'checkbox', label: 'Multi Choice' },
+            { type: 'dropdown', label: 'Dropdown' },
             { type: 'date', label: 'Date' },
             { type: 'number', label: 'Number' },
         ];
@@ -484,10 +525,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     <div class="bg-white p-6 rounded-xl shadow-lg mb-8">
                         <h2 class="text-2xl font-bold text-gray-700 mb-4">Add a Question</h2>
-                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
                             ${questionTypes.map(q => `
-                                <button data-action="add-question" data-type="${q.type}" class="p-4 border rounded-lg text-center hover:bg-blue-50 hover:border-blue-300 transition-colors">
-                                    <span class="font-semibold text-gray-700 pointer-events-none">${q.label}</span>
+                                <button data-action="add-question" data-type="${q.type}" class="p-3 border rounded-lg text-center hover:bg-blue-50 hover:border-blue-300 transition-colors">
+                                    <span class="font-semibold text-gray-700 pointer-events-none text-sm">${q.label}</span>
                                 </button>
                             `).join('')}
                         </div>
@@ -525,9 +566,11 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = questions.map((q, index) => `
             <div class="question-card bg-white p-6 rounded-xl shadow-lg border-l-4 border-blue-500" draggable="true" data-question-id="${q.id}">
                 <div class="flex items-start justify-between">
-                    <div class="flex-grow">
+                    <div class="flex-grow pr-4">
                         <input type="text" data-action="update-question-text" value="${q.text}" class="text-lg font-semibold text-gray-800 w-full border-b-2 border-transparent focus:border-blue-500 outline-none p-1" placeholder="Enter your question text">
-                        ${q.type === 'radio' || q.type === 'checkbox' ? `
+                        <textarea data-action="update-question-description" class="mt-2 text-sm text-gray-600 w-full border rounded-md p-2" placeholder="Helper/Description Text (Optional)">${q.description || ''}</textarea>
+                        
+                        ${q.type === 'radio' || q.type === 'checkbox' || q.type === 'dropdown' ? `
                             <div class="mt-4 space-y-2 options-container">
                                 ${q.options.map((opt, optIndex) => `
                                     <div class="flex items-center">
@@ -539,12 +582,21 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button data-action="add-option" class="mt-2 text-sm text-blue-600 hover:underline">Add Option</button>
                         ` : ''}
                     </div>
-                    <div class="ml-4 flex flex-col items-center space-y-2">
+                    <div class="flex flex-col items-center space-y-2 flex-shrink-0">
                         <span class="text-xs text-gray-400 uppercase">${q.type.replace('_', ' ')}</span>
                         <button data-action="delete-question" class="p-1 text-gray-400 hover:text-red-500" title="Delete Question">
                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
                     </div>
+                </div>
+                 <div class="mt-4 pt-4 border-t flex items-center justify-end">
+                    <label class="flex items-center cursor-pointer">
+                        <span class="mr-3 text-sm font-medium text-gray-700">Required</span>
+                        <div class="relative">
+                            <input type="checkbox" data-action="update-question-required" class="sr-only peer" ${q.isRequired ? 'checked' : ''}>
+                            <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
                 </div>
             </div>
         `).join('');
@@ -563,22 +615,27 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.render(pages.taker, containerHtml);
         const container = document.getElementById('survey-taker-container');
 
-        const renderMessage = (title, message) => {
+        const renderMessage = (title, message, isError = false) => {
             const messageHtml = `
             <div class="bg-white p-8 rounded-xl shadow-lg text-center">
-                <h2 class="text-2xl font-bold text-yellow-600">${title}</h2>
+                <h2 class="text-2xl font-bold ${isError ? 'text-red-600' : 'text-yellow-600'}">${title}</h2>
                 <p class="text-gray-700 mt-2">${message}</p>
+                <a href="#/dashboard" class="mt-6 inline-block px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Back to Dashboard</a>
             </div>`;
             UI.render(container, messageHtml);
         };
         
         const survey = await DB.getSurvey(id);
         if(!survey) {
-            renderMessage('Not Found', 'This survey could not be found.');
+            renderMessage('Not Found', 'This survey could not be found.', true);
             return;
         }
 
-        // --- NEW: Enforce Survey Settings ---
+        if (survey.structure.length === 0) {
+            renderMessage('Empty Survey', 'This survey has no questions. Please add questions in the builder.', true);
+            return;
+        }
+
         if (survey.settings?.closingDate && new Date() > new Date(survey.settings.closingDate)) {
              renderMessage('Survey Closed', 'This survey is no longer accepting responses.');
              return;
@@ -591,9 +648,53 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
         }
-        // --- END: Enforce Survey Settings ---
 
         renderConsentScreen(survey);
+    }
+
+    async function renderResponseDetailPage({ id }) {
+        UI.showPage('responseDetail');
+        const response = await DB.getResponse(id);
+        if (!response) {
+            pages.responseDetail.innerHTML = `<p>Response not found.</p>`;
+            return;
+        }
+        const survey = await DB.getSurvey(response.surveyId);
+
+        const html = `
+            <div class="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
+                <div class="max-w-4xl mx-auto">
+                    <header class="mb-6">
+                        <h1 class="text-3xl font-extrabold text-gray-800 tracking-tight">Response Details</h1>
+                        <p class="text-lg text-gray-600 mt-1">For survey: <span class="font-semibold">${survey.metadata.title}</span></p>
+                        <div class="mt-2 text-sm text-gray-500">
+                            <span>Response ID: <strong class="text-gray-700">${response.id}</strong></span> | 
+                            <span>Collected: <strong class="text-gray-700">${new Date(response.timestamp).toLocaleString()}</strong></span>
+                        </div>
+                    </header>
+
+                     <div class="sticky top-16 bg-slate-100 py-4 z-10 -mx-4 px-4 border-b mb-6">
+                        <div class="max-w-4xl mx-auto flex items-center justify-between">
+                            <a href="#/dashboard" class="px-5 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg text-base hover:bg-gray-100 transition-colors">
+                                &larr; Back to Dashboard
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <main class="space-y-4">
+                        ${survey.structure.map(q => `
+                            <div class="bg-white p-6 rounded-lg shadow-sm">
+                                <p class="text-lg font-semibold text-gray-800">${q.text}</p>
+                                ${q.description ? `<p class="text-sm text-gray-500 mt-1">${q.description}</p>` : ''}
+                                <div class="mt-3 pt-3 border-t">
+                                    <p class="text-gray-900 text-lg">${String(response.data[q.text] || '<em>Not Answered</em>')}</p>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </main>
+                </div>
+            </div>`;
+        UI.render(pages.responseDetail, html);
     }
 
     function renderConsentScreen(survey) {
@@ -607,9 +708,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h2 class="font-bold text-lg mb-2">Consent & Disclaimer</h2>
                     <p class="text-gray-700 whitespace-pre-wrap">${survey.metadata.consent}</p>
                 </div>
-                <button data-action="start-survey" data-id="${survey.id}" class="mt-8 w-full px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity">
-                    Start Survey
-                </button>
+                <div class="flex flex-col sm:flex-row-reverse gap-4 mt-8">
+                     <button data-action="start-survey" data-id="${survey.id}" class="w-full px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-lg text-lg hover:opacity-90 transition-opacity">
+                        Start Survey
+                    </button>
+                    <a href="#/dashboard" class="w-full sm:w-auto px-8 py-4 bg-gray-200 text-gray-800 font-bold rounded-lg text-lg hover:bg-gray-300 transition-colors">
+                        Cancel
+                    </a>
+                </div>
             </div>`;
         UI.render(container, html);
     }
@@ -617,10 +723,14 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderSurveyQuestionsForTaker(survey) {
         const container = document.getElementById('survey-taker-container');
         const html = `
-            <form id="survey-form" data-id="${survey.id}">
+            <form id="survey-form" data-id="${survey.id}" novalidate>
                 ${survey.structure.map(q => `
                     <div class="bg-white p-6 rounded-lg shadow-sm mb-4">
-                        <label class="block text-lg font-semibold text-gray-800 mb-3">${q.text}</label>
+                        <label class="block text-lg font-semibold text-gray-800 mb-1">
+                            ${q.text}
+                            ${q.isRequired ? '<span class="text-red-500 ml-1">*</span>' : ''}
+                        </label>
+                        ${q.description ? `<p class="text-sm text-gray-500 mb-3">${q.description}</p>` : ''}
                         ${renderQuestionInput(q)}
                     </div>
                 `).join('')}
@@ -634,19 +744,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderQuestionInput(q) {
         const name = `q-${q.id}`;
+        const required = q.isRequired ? 'required' : '';
+        const baseClasses = "w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500";
         switch(q.type) {
             case 'short_text':
-                return `<input type="text" name="${name}" required class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500">`;
+                return `<input type="text" name="${name}" ${required} class="${baseClasses}">`;
             case 'long_text':
-                return `<textarea name="${name}" required rows="4" class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500"></textarea>`;
+                return `<textarea name="${name}" ${required} rows="4" class="${baseClasses}"></textarea>`;
             case 'number':
-                return `<input type="number" name="${name}" required class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500">`;
+                return `<input type="number" name="${name}" ${required} class="${baseClasses}">`;
             case 'date':
-                return `<input type="date" name="${name}" required class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500">`;
+                return `<input type="date" name="${name}" ${required} class="${baseClasses}">`;
             case 'radio':
                 return `<div class="space-y-2">${q.options.map(opt => `
                     <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
-                        <input type="radio" name="${name}" value="${opt}" required class="h-5 w-5 text-blue-600 focus:ring-blue-500">
+                        <input type="radio" name="${name}" value="${opt}" ${required} class="h-5 w-5 text-blue-600 focus:ring-blue-500">
                         <span class="ml-3 text-lg text-gray-700">${opt}</span>
                     </label>`).join('')}</div>`;
             case 'checkbox':
@@ -655,6 +767,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         <input type="checkbox" name="${name}" value="${opt}" class="h-5 w-5 text-blue-600 rounded focus:ring-blue-500">
                         <span class="ml-3 text-lg text-gray-700">${opt}</span>
                     </label>`).join('')}</div>`;
+            case 'dropdown':
+                 return `<select name="${name}" ${required} class="${baseClasses}">
+                    <option value="">Select an option</option>
+                    ${q.options.map(opt => `<option value="${opt}">${opt}</option>`).join('')}
+                 </select>`;
             default: return '';
         }
     }
@@ -683,8 +800,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (e.target.id === 'new-survey-btn') { handleNewSurvey(); }
                 if (action === 'edit') { Router.navigate(`/builder/${id}`); }
                 if (action === 'delete') { handleDeleteSurvey(id); }
-                if (action === 'share') { handleShareSurvey(id); }
                 if (action === 'export') { handleExportSurvey(id); }
+                if (action === 'start-response') { Router.navigate(`/collect/${id}`); }
+                if (action === 'toggle-responses') { 
+                    const card = e.target.closest('.survey-card');
+                    card.classList.toggle('expanded');
+                }
             }
             
             // Builder actions
@@ -722,13 +843,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Builder specific input handlers
+        // Builder specific input handlers for autosaving
         document.body.addEventListener('input', e => {
-            const action = e.target.dataset.action;
             if (e.target.closest('#page-builder')) {
-                const questionCard = e.target.closest('.question-card');
-                if (action === 'update-question-text') { handleUpdateQuestionText(questionCard.dataset.questionId, e.target.value); }
-                if (action === 'update-option-text') { handleUpdateOptionText(questionCard.dataset.questionId, e.target.dataset.optionIndex, e.target.value); }
+                handleSaveSurvey();
+            }
+        });
+        document.body.addEventListener('change', e => {
+            if (e.target.closest('#page-builder') && e.target.dataset.action === 'update-question-required') {
+                handleSaveSurvey();
             }
         });
 
@@ -743,6 +866,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.addEventListener('dragend', e => {
             if (e.target.classList.contains('question-card')) {
                 e.target.classList.remove('is-dragging');
+                draggedItem = null;
             }
         });
         document.body.addEventListener('dragover', e => {
@@ -770,7 +894,6 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (e.target.classList.contains('drop-zone')) {
                 questionContainer.appendChild(draggedItem);
             }
-            draggedItem = null;
             // Update the order in the database immediately
             await handleSaveSurvey();
         });
@@ -824,15 +947,6 @@ document.addEventListener('DOMContentLoaded', () => {
             renderDashboardPage(); // Refresh dashboard
         }
     }
-
-    function handleShareSurvey(id) {
-        const url = `${window.location.origin}${window.location.pathname}#/take/${id}`;
-        navigator.clipboard.writeText(url).then(() => {
-            alert(`Survey link copied to clipboard!\n\n${url}`);
-        }, () => {
-            alert(`Could not copy link. Here it is:\n\n${url}`);
-        });
-    }
     
     async function handleExportSurvey(id) {
         const survey = await DB.getSurvey(id);
@@ -852,7 +966,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return flatResponse;
         });
 
-        // Use the existing XLSX library loaded in index.html
         const ws = XLSX.utils.json_to_sheet(dataForSheet);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Responses');
@@ -910,7 +1023,9 @@ document.addEventListener('DOMContentLoaded', () => {
             id: `q-${Date.now()}`,
             type,
             text: '',
-            options: (type === 'radio' || type === 'checkbox') ? ['Option 1'] : [],
+            description: '',
+            isRequired: true,
+            options: (type === 'radio' || type === 'checkbox' || type === 'dropdown') ? ['Option 1'] : [],
         };
         survey.structure.push(newQuestion);
         await DB.saveSurvey(survey);
@@ -926,23 +1041,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const newStructure = questionElements.map(card => {
             const id = card.dataset.questionId;
             const text = card.querySelector('[data-action="update-question-text"]').value;
+            const description = card.querySelector('[data-action="update-question-description"]').value;
+            const isRequired = card.querySelector('[data-action="update-question-required"]').checked;
             const typeText = card.querySelector('.text-xs.uppercase').textContent.toLowerCase().replace(' ', '_');
             
             let options = [];
-            if (typeText === 'multiple_choice' || typeText === 'checkboxes') {
+            if (typeText === 'single_choice' || typeText === 'multi_choice' || typeText === 'dropdown') {
                 options = [...card.querySelectorAll('[data-action="update-option-text"]')].map(optEl => optEl.value);
             }
-            
-            return { id, text, type: typeText, options };
+
+            // Map UI text back to stored type
+            const typeMap = { 'single_choice': 'radio', 'multi_choice': 'checkbox' };
+            const finalType = typeMap[typeText] || typeText;
+
+            return { id, text, description, isRequired, type: finalType, options };
         });
 
         const survey = await DB.getSurvey(surveyId);
         survey.structure = newStructure;
         await DB.saveSurvey(survey);
         
-        // Add visual feedback for saving
         const saveBtn = document.getElementById('save-survey-btn');
-        const originalText = saveBtn.textContent;
+        if (document.activeElement.closest('.question-card')) return; // Don't show feedback if user is still editing
+
+        const originalText = "Save Survey";
         saveBtn.textContent = 'Saved!';
         saveBtn.classList.remove('from-green-500', 'to-emerald-600');
         saveBtn.classList.add('bg-green-600');
@@ -962,7 +1084,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleAddOption(questionId) {
-         const surveyId = document.querySelector('[data-survey-id]').dataset.surveyId;
+        const surveyId = document.querySelector('[data-survey-id]').dataset.surveyId;
         const survey = await DB.getSurvey(surveyId);
         const question = survey.structure.find(q => q.id === questionId);
         if(question) {
@@ -990,29 +1112,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const formData = new FormData(form);
         const responseData = {};
 
+        let isValid = true;
         survey.structure.forEach(q => {
             const key = `q-${q.id}`;
             const questionText = q.text;
+            let value;
             if (q.type === 'checkbox') {
-                responseData[questionText] = formData.getAll(key).join(', ');
+                value = formData.getAll(key).join(', ');
             } else {
-                responseData[questionText] = formData.get(key);
+                value = formData.get(key);
+            }
+            responseData[questionText] = value;
+            if(q.isRequired && !value) {
+                isValid = false;
             }
         });
+
+        if (!isValid) {
+            alert('Please fill out all required fields.');
+            return;
+        }
 
         await DB.addResponse({
             surveyId,
             timestamp: Date.now(),
             data: responseData,
         });
-
-        const container = document.getElementById('survey-taker-container');
-        UI.render(container, `
-            <div class="bg-white p-8 rounded-xl shadow-lg text-center">
-                <h2 class="text-2xl font-bold text-green-600">Thank You!</h2>
-                <p class="text-gray-700 mt-2">Your response has been successfully submitted.</p>
-            </div>
-        `);
+        
+        Router.navigate('/dashboard');
+        // Future improvement: show a toast notification on the dashboard.
     }
 
     // --- LEGACY MODULE (Original App) ---
